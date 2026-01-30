@@ -701,8 +701,8 @@ export function HeroChat({
               className="w-12 h-12 rounded-xl shadow-lg"
             />
             <div className="flex flex-col">
-              <span className="text-white font-bold text-xl tracking-[-0.02em]">Solution Designer</span>
-              <span className="text-[#6a6a75] text-sm font-medium">by Pypestream</span>
+              <span className="text-white font-bold text-xl tracking-[-0.02em]">Solution Builder</span>
+              <span className="text-[#6a6a75] text-sm font-medium">DEMO for Pypestream</span>
             </div>
           </div>
           

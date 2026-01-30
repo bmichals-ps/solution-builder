@@ -66,10 +66,10 @@ export function Sidebar() {
         >
           <img 
             src="/pypestream-logo.png" 
-            alt="Solution Designer" 
+            alt="Solution Builder" 
             className="w-8 h-8 rounded-lg"
           />
-          <span className="text-[#e8e8f0] font-semibold text-[15px] tracking-[-0.01em]">Solution Designer</span>
+          <span className="text-[#e8e8f0] font-semibold text-[15px] tracking-[-0.01em]">Solution Builder</span>
         </button>
       </div>
       

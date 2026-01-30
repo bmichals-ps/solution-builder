@@ -255,7 +255,7 @@ function AuthScreen({
       logo: <FigmaLogo className="w-16 h-16" />,
       color: 'from-[#F24E1E] to-[#A259FF]',
       buttonColor: 'bg-[#0d0d0d] hover:bg-[#1a1a1a] border border-white/10 text-white',
-      description: 'Connect your Figma account to import bot flow designs directly into Solution Designer.',
+      description: 'Connect your Figma account to import bot flow designs directly into Solution Builder.',
       features: [
         'Import flow diagrams as bot nodes',
         'Sync design updates automatically',

@@ -185,7 +185,7 @@ export function NavDrawer() {
               alt="Pypestream" 
               className="w-8 h-8"
             />
-            <span className="text-sm font-semibold text-white">Solution Designer</span>
+            <span className="text-sm font-semibold text-white">Solution Builder</span>
           </div>
           <button
             onClick={handleClose}

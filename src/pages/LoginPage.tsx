@@ -98,7 +98,7 @@ export function LoginPage() {
             alt="Pypestream" 
             className="w-16 h-16 mx-auto mb-4"
           />
-          <h1 className="text-2xl font-bold text-white mb-2">Solution Designer</h1>
+          <h1 className="text-2xl font-bold text-white mb-2">Solution Builder</h1>
           <p className="text-[#8585a3] text-sm">
             {mode === 'signin' ? 'Sign in to your account' : 'Create a new account'}
           </p>
@@ -242,7 +242,7 @@ export function LoginPage() {
 
         {/* Footer */}
         <p className="text-center text-[12px] text-[#5c5c78] mt-6">
-          Powered by Pypestream
+          DEMO for Pypestream
         </p>
       </div>
     </div>
