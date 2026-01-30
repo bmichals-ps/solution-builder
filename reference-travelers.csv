@@ -1,0 +1,2085 @@
+Node Number,Node Type,Node Name,Intent,Entity Type,Entity,NLU Disabled?,Next Nodes,Message,Rich Asset Type,Rich Asset Content,Answer Required?,Behaviors,Command,Description,Output,Node Input,Parameter Input,Decision Variable,What Next?,Node Tags,Skill Tag,Variable,Platform Flag,Flows,CSS Classname
+99990,A,SlackLogger,,,,,,"Live App ID
+
+f635a328-d734-4a89-8b39-3b37e2057da2",,,,,SlackLogger,"Action node that will send proactive error notifications to a Slack channel
+
+* Includes direct button links to Grafana as well as the CHATID",success,,,success,true~99991|error~99991,,,"CHATID,CHECKLASTURL,LASTURL,CHECKLASTURL_ERROR,ACTION_NODE_ERROR,SESSION_ID",,,
+99991,A,VarCheck - PYPESTREAM_TEST,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""PYPESTREAM_TEST""}",valid,true~99995|false~99992|error~99992,,,PYPESTREAM_TEST,,,
+99992,A,VarCheck - SAVE_NODE,,,,,,,,,,,VarCheck,"This VarCheck is to check if a user has encountered a techincal error during Phase 3. If the SAVE_NODE is set to something other than ""None"", we can assume the user has made it to itemization. If so, we want to show a different technical error message.",valid,,"{""global_var_name"":""SAVE_NODE""}",valid,true~99994|false~99993|error~99991,,,SAVE_NODE,,,
+99993,D,Error Message → No itemization,,,,,,"Sorry, I encountered a technical error. Please call **1-800-252-4633** to file your claim, or try again later.",button,Start over~1,1,disable_input,,,,,,,,,,,,,
+99994,D,Error Message → Itemization | Phase 3,,,,,,"Sorry, I encountered a technical error. Please reach out to your Claim professional, or try again later.",button,Start over~1,1,disable_input,,,,,,,,,,,,,
+99995,D,Error action node - Pypestream Internal,,,,,,"Sorry, I encountered a technical error. Please call **1-800-252-4633** to file your claim, or try again later.
+
+Error → {ACTION_NODE_ERROR}",button,Start over~1,1,disable_input,,,,,,,,,,,,,
+'-585,A,BotToPlatform (requesting transcript from Platform),,,,,,ECH BEGIN - requesting transcript,,,,,BotToPlatform,,success,,"{""schema"" : ""please_reply_with"", ""requesting"": ""chatlog""}",success,true~5850|false~5850|error~5850,,,,,,
+5850,A,GenerateVeriskToken,,,,,,,,,,,GenerateVeriskToken,Generates access token for the GenerateVeriskLink action node,success,,,success,true~58501|false~58501|error~58501,,,VERISK_ACCESS_TOKEN,,,
+58501,A,FindTaskStatus,,,,,,,,,,,FindTaskStatus,"Checks the user's progress on the Verisk Itemization Webview.
+
+If we get a message in the response saying ""task not ready due to status"", we're gonna save the user's progress (via Savenode)
+
+Any other message (as long as the response is 200) means the task is ready + we can go to Phase 4
+
+
+Easter Egg (7/27)
+
+- If you're reading this rn, congrats! Lucas will give you 20 Bonusly points for finding this secret egg.",success,,,success,task_ready~5852|task_not_ready~5851|false~5851|error~5851,,,"VERISK_ACCESS_TOKEN,CLAIM_NUMBER",,,
+5851,A,VarCheck - SAVE_NODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""SAVE_NODE""}",valid,true~5852|false~5853|error~5853,,,SAVE_NODE,,,
+5852,A,"PostToUserDataBQTable
+
+✓",,,,,,,,,,,PostToUserDataBQTable,Posts to BQ Table if user has opened the link provided from Verisk,success,,,success,true~5856|false~5856|error~99990,,,"SESSION_ID,POLICY_NUMBER,SAVE_NODE,VERISK_LINK,FIRSTNAME,LASTNAME,SAVE_NODE,EMAIL,CLAIM_NUMBER,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDR1,POLICYADDR2,STOLEN_ITEMS_LIST,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,STOLEN_ITEMS_SUMMARY,STOLEN_ITEM",,,
+5853,D,Assigning the transcript to a var,,,,1,5854,ECH - assigning the transcript variable,,,1,,,,,,,,,,,TRANSCRIPT,,,
+5854,A,ReformatTranscript,,,,,,ECH - reformatting the transcript to a more readable state,,,,,ReformatTranscript,,success,,,success,true~5855|false~5855|error~5855,,,"TRANSCRIPT,REFORMATTED_TRANSCRIPT",,,
+5855,A,SlackLoggerBotCrash,,,,,,,,,,,SlackLoggerBotCrash,,success,,"{
+        ""customer_name"": ""travelersinsurance"",
+        ""customer_display_name"": ""Travelers Insurance"",
+        ""query_time_frame"": ""6h""
+}",success,true~5856|false~5856|error~5856,,,"TRANSCRIPT,CHATID,REFORMATTED_TRANSCRIPT,SESSION_ID,LASTURL",,,
+5856,D,ECH - End Chat,,,,,,Done,,,,,,,,,,,,,,,,,
+1800,D,Out of scope,out_of_scope,,,,,I'm not yet trained to understand natural language.,button,Start over~1,1,disable_input,,,,,,,,,,,,,
+666,D,End chat,,,,,,,,,,,,,,,,,,,,,,,
+999,D,Agent,,,,,,Transferring you to an agent...,,,,xfer_to_agent,,,,,,,,,,,,,
+5000,D,Placeholder Start Node,,,,,,Please select the flow you'd like to see.,button,"<<fas fa-lock-alt>> Authenticated flow~100|
+<<far fa-lock-open-alt>> Unauthenticated flow~101|
+<<far fa-money-check-alt>> Jump to Payout Methods~666",1,disable_input,,,,,,,,,,,,,
+10112,D,Greeting Unauth 2 (travelers.com),,,,1,100,"To begin the claims process, please enter your **policy number** below:",,,1,,,,,,,,,,,POLICY_NUMBER,,,
+1,A,ShowMetadata - Retrieves Chat ID of current convo,,,,,,,,,,,ShowMetadata,Retrieves CHATID for Slack error logger,success,,,success,true~10|false~10|error~99990,,,CHATID,,,
+10,A,UserPlatformRouting - Capture device type,,,,,,,,,,,UserPlatformRouting,,success,,,success,ios~100|android~1001|desktop~1002|error~1003,,,,,,
+100,A,SetVar  - iOS,,,,,,,,,,,SetVar,,success,,"{""global_vars"":""USER_PLATFORM"",""input_var"":""iOS""}",success,true~101|error~1003,,,USER_PLATFORM,,,
+1001,A,SetVar - Android,,,,,,,,,,,SetVar,,success,,"{""global_vars"":""USER_PLATFORM"",""input_var"":""Android""}",success,true~101|error~1003,,,USER_PLATFORM,,,
+1002,A,SetVar - Desktop,,,,,,,,,,,SetVar,,success,,"{""global_vars"":""USER_PLATFORM"",""input_var"":""Desktop""}",success,true~101|error~1003,,,USER_PLATFORM,,,
+1003,D,User platform - Catch all error,,,,,101,,,,,,,,,,,,,,,,,,
+101,A,CheckLastURL - Retrieves SESSION_ID in URL,,,,,,,,,,,CheckLastURL,"Description: 
+
+This action node reads the URL that the user is on and pulls the query parameter. If the query parameter is in the form of a chat ID, we route them to ""true"" as the success. 
+
+If the user has ""lordyum"" in the query parameter (ex. ""travelers.pypestream.com?lordyum"") that means we're going down the secret flow. If ""lordyum"" is present, we'll take them to ""hidden_flow"" which is essentially a secret shortcut for testing. 
+
+Input:
+
+URL that the user has received via text message (query parameter will be in the URL)",success,,,success,"true~1017|
+hidden_flow~10100|
+hidden_flow_2~10100|
+false~10100|
+no_session_id~99990|
+error~99990",,,"LASTURL,SESSION_ID,CHECKLASTURL,CHECKLASTURL_ERROR",,,
+10100,A,AssignVar - Request Body for Phase 3 CreateClaim,,,,,,,,,,,AssignVariable,Hardcoded global variables so we can skip to the CreateClaim without answering all the questions.,success,,"{
+    ""set"": {
+        ""PYPESTREAM_TEST"": ""true"",
+        ""HIDDEN_FLOW"": ""true"",
+        ""QUANTUM_POLICY"": ""QTM"",
+        ""POLICY_DEDUCTIBLE"": ""$500"",
+        ""INSURED"": ""true"",
+        ""FIRSTNAME"": ""Lucas"",
+        ""LASTNAME"": ""Yum"",
+        ""EMAIL"": ""lyum@pypestream.com"",
+        ""PHONE_NUMBER"": ""5103784937"",
+        ""PHONE_FORMATTED"": ""5103784937"",
+        ""POLICY_NUMBER"": ""6086958246361"",
+        ""POLICYADDR1"": ""123 Main Street"",
+        ""POLICYADDRCITY"": ""Oakland"",
+        ""POLICYADDRPOSTAL"": ""94538"",
+        ""POLICYADDRSTATE"": ""CA"",
+        ""DOL"": ""2023-02-28"",
+        ""LOSS_SUMMARY"": ""Test lost summary text"",
+        ""BUILDINGDAMAGE"": ""True"",
+        ""THEFT_ON_PREMISE"": ""Yes"",
+        ""IS_TRAINING_BOOLEAN"": ""False"",
+        ""PRODUCER_CODE"": ""TestCD"",
+        ""CLAIM_NUMBER"": ""222TEST"",
+        ""INVESTIGATION_PASSED"": ""True"",
+        ""POLICE_REPORT"": ""Yes"",
+        ""POLICE_DEPARTMENT"": ""Fremont Police Department"",
+        ""CASE_NUMBER"": ""Unknown"",
+        ""PROPERTY_OWNER"": ""Me or my immediate family who lives with me"",
+        ""BUSINESS_PURPOSE"": ""No"",
+        ""REPLACEMENT_COST_ENDORSEMENT_PRESENT"": true,
+        ""POLICY_LIMIT"": ""$2000""
+    }
+}",success,true~4|error~99990,,,"FIRSTNAME,LASTNAME,EMAIL,PHONE_NUMBER,PHONE_FORMATTED,POLICY_NUMBER,POLICYADDR1,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDRSTATE,DOL,LOSS_SUMMARY,BUILDINGDAMAGE,THEFT_ON_PREMISE,IS_TRAINING_BOOLEAN,PRODUCER_CODE,CLAIM_NUMBER,INVESTIGATION_PASSED,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,POLICY_DEDUCTIBLE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,POLICY_LIMIT",,,
+101010,A,VarCheck - SAVE_NODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""SAVE_NODE""}",valid,true~1018|false~101011|error~99990,,,SAVE_NODE,,,
+101011,D,Ask which flow to test (Phase 3 or Verisk),,,,,,What would you like to test?,button,Phase 3~4|Verisk Webview~5|Verisk Link~44|Save node~101010,1,disable_input,,,,,,,,,,,,,
+10102,D,Ask which Quantum policy to test,,,,,,Which Quantum Policy do you want to test?,button,Quantum 1~10103|Quantum 2~2,1,disable_input,,,,,,,,,,,,,
+10103,A,AssignVar - QUANTUM_POLICY (QTM),,,,,,,,,,,AssignVariable,,success,,"{
+        ""set"": {
+                ""QUANTUM_POLICY"": ""QTM""
+ 
+        }
+}",success,true~4|error~99990,,,QUANTUM_POLICY,,,
+10104,A,AssignVar - QUANTUM_POLICY (Q2),,,,,,,,,,,AssignVariable,,success,,"{
+        ""set"": {
+                ""QUANTUM_POLICY"": ""Q2""
+ 
+        }
+}",success,true~4|error~99990,,,QUANTUM_POLICY,,,
+1011,D,Ask for policy number - Hidden flow,,,,1,1012,Please enter your policy number below.,,,1,,,,,,,,,,,POLICY_NUMBER,,,
+1012,D,Ask for phone number - Hidden flow,,,,1,1013,What's your phone number?,,,1,,,,,,,,,,,PHONE_NUMBER,,,
+1013,A,FormatPhone - Hidden flow,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_NUMBER"",""output_var"":""PHONE_FORMATTED""}",success,true~112|false~99990|error~99990,,,"PHONE_NUMBER,PHONE_FORMATTED",,,
+1014,D,Testing: ANI Decision,,,,,,,button,"ANI Yes~1015|
+ANI No~1016",1,disable_input,,,,,,,,,,,,,
+1015,A,AssignVar - ANI Y,,,,,,,,,,,AssignVariable,,success,,"{
+        ""set"": {
+                ""ANI"": ""Yes""
+ 
+        }
+}",success,true~113|error~99990,,,ANI,,,
+1016,A,AssignVar - ANI N,,,,,,,,,,,AssignVariable,,success,,"{
+        ""set"": {
+                ""ANI"": ""No""
+ 
+        }
+}",success,true~113|error~99990,,,ANI,,,
+1017,A,CheckBQUserData,,,,,,,,,,,CheckBQUserData,"Action node that checks for the ""SAVENODE"" global variable. If it's present, we're going to take the user to that part of the flow (ex. skip to phase 3).
+
+The action node will also check to see if the itemization portion (webview in Phase 3) has been completed. If it's already been completed by the user (which means they're done with Phase 3), we're gonna route them to the ""itemization_completed"" message. - Lucas wuz here (9/25/23)",success,,,success,true~10171|itemization_completed~10301|false~102|error~99990,,,"SESSION_ID,POLICY_NUMBER,SAVE_NODE,VERISK_LINK,FIRSTNAME,LASTNAME,SAVE_NODE,EMAIL,CLAIM_NUMBER,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDR1,POLICYADDR2,STOLEN_ITEMS_LIST,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,STOLEN_ITEMS_SUMMARY,STOLEN_ITEM",,,
+10171,D,Invisible node for capturing: Policy Number / Phone Number,,,,,1018,"Session ID → {SESSION_ID}
+
+Is Training → {IS_TRAINING_BOOLEAN}
+
+Phone Number → {PHONE_NUMBER}
+
+Policy Number → {POLICY_NUMBER}",,,,,,,,,,,,,,,,,policy_phone_reporting
+1018,D,Greet user - User is returning to solution,,,,,,Welcome back {FIRSTNAME}! Are you ready to provide more details on your stolen items?,button,"<<far fa-check>> Yes~440|
+<<far fa-ban>> No, end chat~666",1,disable_input,,,,,,,,,,,,,
+1019,D,Itemization already completed (User finished phase 3),,,,,666,It looks like you’ve already submitted your claim and the additional info on the stolen items. Your Claim professional will reach out to you shortly with next steps.,,,,,,,,,,,,,,,,,
+102,A,GetPolicyAndPhone,,,,,,,,,,,GetPolicyAndPhone,"Description:
+
+This action node will retrieve the policy number, phone number, and is_training_boolean from BQ. Moreover, this script will check if a claim has already been submitted.",success,,,success,true~10200|already_used~1020|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,IS_TRAINING_BOOLEAN,SESSION_ID,ORIGINATOR,SAVE_NODE",,,
+1020,A,VarCheck - SAVE_NODE,,,,,,,,,,,VarCheck,"This VarCheck will be hit when a user revisits the solution after creating a claim.
+
+- If SAVE_NODE is None, that means the user never got to the itemization portion in Phase 3
+
+- If SAVE_NODE is valid, we want to route the user to the SAVE_NODE in the solution (where they were previously at).
+
+We need this VarCheck because if the user submits a claim and has a SAVE_NODE set (they're in Phase 3), we want to take them to the right spot. If there wasn't a VarCheck, the user would get the message saying the claim has already been submitted. Lucas - 9/25/23",valid,,"{""global_var_name"":""SAVE_NODE""}",valid,true~1018|false~103|error~103,,,SAVE_NODE,,,
+10200,A,"PostToBQTable→ sms_opened
+
+✓",,,,,,,,,,,PostToBQTable,Posts to BQ Table if user has opened the link provided from the CCS Pype.,success,,"{
+  ""event"": ""sms_opened""
+}",success,true~10201|false~10201|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,ORIGINATOR,CLAIM_FILER",,,
+10201,A,CheckOriginator - ORIGINATOR (IVR or CCS),,,,,,,,,,,CheckOriginator,,success,,,success,ivr~10202|ccs~1021|false~1021|error~99990,,,ORIGINATOR,,,
+10202,A,SetVar - GHOST_NODE | For reporting purposes,,,,,,,,,,,SetVar,"If a user is coming via IVR, we'll hit this node so we can capture the data for reporting.",success,,"{""global_vars"":""GHOST_NODE "",""input_var"":""true""}",success,true~10203|error~99990,,,GHOST_NODE,,,
+10203,D,Invisible node for capturing: Policy Number / Phone Number,,,,,1022,"Session ID → {SESSION_ID}
+
+Is Training → {IS_TRAINING_BOOLEAN}
+
+Phone Number → {PHONE_NUMBER}
+
+Policy Number → {POLICY_NUMBER}",,,,,,,,,,,,,,,,,policy_phone_reporting
+1021,D,Invisible node for capturing: Policy Number / Phone Number,,,,,1022,"Session ID → {SESSION_ID}
+
+Is Training → {IS_TRAINING_BOOLEAN}
+
+Phone Number → {PHONE_NUMBER}
+
+Policy Number → {POLICY_NUMBER}",,,,,,,,,,,,,,,,,policy_phone_reporting
+1022,A,FormatPhone,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_NUMBER"",""output_var"":""PHONE_FORMATTED""}",success,true~111|false~99990|error~99990,,,"PHONE_NUMBER,PHONE_FORMATTED",,,
+103,A,CheckLockout,,,,,,,,,,,CheckLockout,,success,,,success,user_in_itemization~1018|user_done~1030|error~99990,,,"POLICE_REPORT,CLAIM_NUMBER",,,
+1030,D,Invisible node for capturing: Policy Number / Phone Number,,,,,10300,"Session ID → {SESSION_ID}
+
+Is Training → {IS_TRAINING_BOOLEAN}
+
+Phone Number → {PHONE_NUMBER}
+
+Policy Number → {POLICY_NUMBER}",,,,,,,,,,,,,,,,,policy_phone_reporting
+10300,D,Claim Already Submitted,,,,,666,It looks like there has already been a claim submitted for this theft. Please call **1-800-252-4633** for help with your claim.,,,,,,,,,,,,,,,,,
+10301,D,Invisible node for capturing: Policy Number / Phone Number,,,,,1031,"Session ID → {SESSION_ID}
+
+Is Training → {IS_TRAINING_BOOLEAN}
+
+Phone Number → {PHONE_NUMBER}
+
+Policy Number → {POLICY_NUMBER}",,,,,,,,,,,,,,,,,policy_phone_reporting
+1031,D,Itemization already completed (User finished phase 3),,,,,666,It looks like you’ve already submitted your claim and the additional info on the stolen items. Your Claim professional will reach out to you shortly with next steps.,,,,,,,,,,,,,,,,,
+111,A,AssignVar - ANI Check,,,,,,,,,,,AssignVariable,Sets the ANI check to Yes until we pull it in from Traveler's APIs,success,,"{
+        ""set"": {
+                ""ANI"": ""Yes""
+        }
+}",success,true~112|error~99990,,,ANI,,,
+112,A,CheckOriginator - ORIGINATOR (IVR or CCS),,,,,,,,,,,CheckOriginator,,success,,,success,ivr~1122|ccs~1121|false~1121|error~99990,,,ORIGINATOR,,,
+1121,D,Greeting message / New DOL → CCS,,,,,,"Hello, I'm your **Digital Assistant** for filing claims for stolen items. To get started, **when were the items stolen?**",button,<<fal fa-calendar>> Select date~113,1,disable_input,,,,,,,,,,,,,
+1122,D,Greeting message / New DOL → IVR,,,,,,"Hello, I'm your **Digital Assistant** for filing claims for stolen items. **To get started, let's confirm:**",quick_reply,"{
+  ""type"": ""static"",
+  ""options"": [
+    {
+      ""label"": ""Yes, I am filing a claim for stolen items"",
+      ""dest"": 1123
+    },
+    {
+      ""label"": ""No, I'd like to file another type of claim (e.g. Damage from water, wind, fire or hail)"",
+      ""dest"": 1124,
+      ""url"": ""https://www.travelers.com/reportmyclaim""
+    }
+  ]
+}",1,disable_input,,,,,,,,,,,,,
+1123,D,User is filling a theft claim → IVR,,,,,,Please tell me **when the items were stolen**.,button,<<fal fa-calendar>> Select date~113,1,disable_input,,,,,,,,,,,,,
+1124,A,"PostEventToBQ → Forced Out (User declined after policy snapshot)
+
+✓",,,,,,,,,,,PostEventToBQ,User declined after seeing the policy snapshot :'(,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Forced Out"",
+        ""forced_out_reason"": ""Filing another type of claim (IVR)"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~11241|hidden_flow~11241|error~99990,,,SESSION_ID,,,
+11241,D,Show phone number for non-theft claims → IVR,,,,,666,This method is for filing claims related to stolen items only. Please use the link in the new tab to file a claim not related to stolen items.,,,,,,,,,,,,,,,,,
+113,A,GetDates,,,,,,,,,,,GetDates,Retrieves the 1st day of the month from 2 years ago (ex. January 1st of 2021) and the last day of the current month,success,,,success,true~1130|error~99990,,,"FIRST_DAY_TWO_YEARS_AGO,CURRENT_DATE",,,
+1130,A,"PostEventToBQ - phase_1_start
+
+✓",,,,,,,,,,,PostEventToBQ,Phase 1 Start,success,,"{
+        ""table_id"": ""travelers_data_2.metric_data_2"",
+        ""columns"": {
+                ""session_id"": ""{SESSION_ID}"",
+                ""event"": ""Phase 1 Start"",
+                ""phase_3_user_device"": ""{USER_PLATFORM}""
+
+        }
+
+}",success,true~1131|hidden_flow~1131|error~99990,,,"SESSION_ID,USER_PLATFORM",,,
+1131,A,SetEnv,,,,,,,,,,,SetEnv,"Sets a global var called ENVIRONMENT equal to the runtime environment we're in. 
+
+I.E. ENVIRONMENT will normally be set to either ""sandbox"" or ""live"".",success,,,success,true~1132|error~99990,,,ENVIRONMENT,,,
+1132,D,Custom future-only datepicker (single date),,,,1,1133,,webview,Please select a date~https://preview.pypestream.com/cx/travelers_datepicker_4/index.html?env={ENVIRONMENT}&picker=datepicker&minDate={FIRST_DAY_TWO_YEARS_AGO}&maxDate={CURRENT_DATE},1,,,,,,,,,,,,,,
+1133,A,GetEventsDate,,,,,,,,,,,GetEventsDate,"Action node to retrieve JS events specificially for the custom datepicker hosted here: https://preview.pypestream.com/cx/gf_datepicker/index.html
+
+Input:
+- {""type"":""single""} for single-date version of the datepicker webview
+- {""type"":""range""} for range version of the datepicker webview",success,,"{""type"":""single""}",success,true~1134|false~1134|error~99990,,,"DOL_DISPLAY,DOL",,,
+1134,A,ValidateDate - USER_DOL,,,,,,,,,,,ValidateDate,"'- Validates the date format
+- Optionally checks if the date is the past / future / not past / not future /present / not present.
+- Optionally outputs to a specified date format
+
+Required input:
+- global_var_name: name of input global variable will be validated.
+
+Optional input:
+- output_format: use it if we want to change date format
+- timezone: use timezone if we want to check today in a specified timezone, list of timezone names: https://gist.github.com/heyalexej/8bf688fd67d7199be4a1682b3eec7568
+- compare_with_today: one of these values: past, future, present, not_past, not_future, not_present
+- compare_with_date: supports: before_date, after_date, not_before_date, not_after_date, not_date. We can use one / all of them at once.
+
+Output:
+- success = true --> valid date format with corresponding to compare_with_today value if available.
+- success = false --> invalid date format
+- success = not_past_false, future_false,... correspond to compare_with_today (not_past, future,...) value if availble.
+- success = compare_with_date_false if the compare with dates false
+- success = error --> catch all exception error",valid,,"{
+  ""global_var_name"": ""DOL"",
+  ""compare_with_today"": ""not_future"",
+  ""output_format"": ""%m-%d-%Y"",
+  ""output_reformatted_date"": ""USER_DOL""
+}",valid,true~114|false~1135|not_future_false~1135|error~99990,,,"DOL,USER_DOL,DOL_DISPLAY",,,
+1135,D,ValidateDate - False (Date in future),,,,,,"I'm sorry, it looks like you may have chosen a date in the **future**. Please let us know when the items were stolen.",button,<<far fa-calendar>> Select date~113,1,disable_input,,,,,,,,,,,,,
+114,D,Confirm date,,,,,,You selected **{DOL_DISPLAY}**. Is this date correct?,button,"<<far fa-check>> Yes, continue~1141|
+<<fal fa-edit>> Edit incident date~113",1,disable_input,,,,,,,,,,,,,
+1141,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~115|error~115,,,EDIT_MODE,,,
+115,A,GeneratePolicyToken,,,,,,,,,,,GeneratePolicyToken,,success,,,success,true~116|error~99990,,,"POLICY_TOKEN,GENERATE_POLICY_TOKEN_CORRELATION_ID",,,
+1150,A,"GeneratePolicyTokenSeriesC
+
+[1/31/24] Testing",,,,,,,,,,,GeneratePolicyTokenSeriesC,,success,,,success,true~1151|error~99990,,,"POLICY_TOKEN,GENERATE_POLICY_TOKEN_CORRELATION_ID",,,
+1151,A,"PolicySnapshotSeriesC
+
+[1/31/24] Testing",,,,,,,,,,,PolicySnapshotSeriesC,,success,,,success,true~1160|policy_not_found~1161|false~1161|error~1161,,,"CHATID,POLICY_NUMBER,POLICY_DEDUCTIBLE,DOL,POLICY_TOKEN,POLICY_SNAPSHOT_CORRELATION_ID,POLICY_PERIOD_START_DATE,POLICY_PERIOD_END_DATE,POLICY_ADDRESS,POLICYADDR1,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDRSTATE,DWELLING_LIMIT,OTHER_STRUCTURE_LIMIT,PERSONAL_PROPERTY_LIMIT,LOSS_OF_USE_LIMIT,POLICY_SNAPSHOT_ERROR_CORRELATION_ID,QUANTUM_POLICY,POLICY_SUMMARY_STRING,PRODUCER_CODE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,PRODUCER_CODE,POLICY_LIMIT,SNAPSHOT_ID",,,
+116,A,PolicySnapshot,,,,,,,,,,,PolicySnapshot,,success,,,success,true~1160|policy_not_found~1161|false~1161|error~1161,,,"CHATID,POLICY_NUMBER,POLICY_DEDUCTIBLE,DOL,POLICY_TOKEN,POLICY_SNAPSHOT_CORRELATION_ID,POLICY_PERIOD_START_DATE,POLICY_PERIOD_END_DATE,POLICY_ADDRESS,POLICYADDR1,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDRSTATE,DWELLING_LIMIT,OTHER_STRUCTURE_LIMIT,PERSONAL_PROPERTY_LIMIT,LOSS_OF_USE_LIMIT,POLICY_SNAPSHOT_ERROR_CORRELATION_ID,QUANTUM_POLICY,POLICY_SUMMARY_STRING,PRODUCER_CODE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,PRODUCER_CODE,POLICY_LIMIT,SNAPSHOT_ID",,,
+1160,A,MultiVarCheck - Address fields,,,,,,,,,,,MultiVarCheck,,valid,,"{
+        ""global_vars"": [""POLICY_ADDRESS"", ""POLICYADDR1"", ""POLICYADDRCITY"", ""POLICYADDRPOSTAL"", ""POLICYADDRSTATE""]
+}",valid,all~117|some~11621|none~11621|error~99990,,,"POLICY_ADDRESS,POLICYADDR1,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDRSTATE",,,
+1161,A,AssignVar - OUTSIDE_POLICY,,,,,,,,,,,AssignVariable,Hardcoded policy address until we get API access,success,,"{
+        ""set"": {
+                ""OUTSIDE_POLICY"": ""true""
+        }
+}",success,true~1162|error~99990,,,"POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL",,,
+1162,A,VarCheck - POLICY_ADDRESS,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICY_ADDRESS""}",valid,true~121|false~11621|error~11621,,,POLICY_ADDRESS,,,
+11621,D,Policy Address Ask,,,,,,"Next, let's collect the **policy address**.",button,<<fal fa-check>> Continue~1163,1,disable_input,,,,,,,,,,,,,
+1163,A,SetEnv - Policy Address,,,,,,,,,,,SetEnv,"Sets a global var called ENVIRONMENT equal to the runtime environment we're in. 
+
+I.E. ENVIRONMENT will normally be set to either ""sandbox"" or ""live"".",success,,,success,true~1164|error~99990,,,ENVIRONMENT,,,
+1164,A,SetFormID - Policy Address,,,,,,,,,,,SetFormID,"This action node used in conjunction with many embedded webviews. In case a solution has multiple webviews that send JS events to the solution, this action node ensures that they do not get mixed up. It assigns a specific for ID to an upcoming webview, so that events coming from that webview will be associated with this specific ID. 
+
+In essense, this script simply increments FORM_ID by 1, or sets it equal to 1 if it doesn't exist yet.",success,,,success,true~1165|error~99990,,,FORM_ID,,,
+1165,D,Address intake widget,,,,1,1166,,webview,Enter your policy address~https://preview.pypestream.com/cx/web-embed/address-form/address_form_v2.0.html?env={ENVIRONMENT}&formId={FORM_ID},1,,,,,,,,,,,,,,
+1166,A,GetAddressFromForm - Policy Address,,,,,,,,,,,GetAddressFromForm,,success,,"{
+  ""full_display_address"": ""POLICYADDR_PRETTY"",
+  ""address_line_1"": ""POLICYADDR1"",
+  ""address_line_2"": ""POLICYADDR2"",
+  ""city"": ""POLICYADDRCITY"",
+  ""state"": ""POLICYADDRSTATE"",
+  ""city"": ""POLICYADDRCITY"",
+  ""postal_code"": ""POLICYADDRPOSTAL"",
+  ""country"": ""POLICYCOUNTRY""
+}",success,true~11660|error~1167,,,"FORM_ID,POLICYADDR_PRETTY,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYCOUNTRY",,,
+11660,A,VarCheck - Apt #,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICYADDR2""}",valid,true~11661|false~116613|error~99990,,,POLICYADDR2,,,
+11661,A,SearchTextForRegex - ADDR2,,,,,,,,,,,SearchTextForRegEx,,found_regex,,"{
+""input_text"":""POLICYADDR2"",
+""output_var"":""POLICYADDR2_OUTPUT"",
+""regex"":""^[\\#]?[1-9]?\\d*(\\s*[-\/]\\s*[1-9]\\d*)?(\\s?[a-zA-Z])?[1-9]*(\\s?[1-9]*[\/]{1}[1-9]*)?$""
+}",found_regex,true~116611|false~11662|error~99990,,,"POLICYADDR2,POLICYADDR2_OUTPUT",,,
+116611,A,SearchTextForRegex - Deny CAN Postal (APT #),,,,,,,,,,,SearchTextForRegEx,,found_regex,,"{
+""input_text"":""POLICYADDRPOSTAL"",
+""output_var"":""POLICYADDRPOSTAL_OUTPUT"",
+""regex"":""^(^[0-9]{9}$)|(^[0-9]{5}$)$""
+}",found_regex,true~11663|false~116612|error~99990,,,"POLICYADDRPOSTAL,POLICYADDRPOSTAL_OUTPUT",,,
+116613,A,SearchTextForRegex - Deny CAN Postal (No APT #),,,,,,,,,,,SearchTextForRegEx,,found_regex,,"{
+""input_text"":""POLICYADDRPOSTAL"",
+""output_var"":""POLICYADDRPOSTAL_OUTPUT"",
+""regex"":""^(^[0-9]{9}$)|(^[0-9]{5}$)$""
+}",found_regex,true~11664|false~116612|error~99990,,,"POLICYADDRPOSTAL,POLICYADDRPOSTAL_OUTPUT",,,
+116612,D,CAN Postal Error,,,,,,"I'm sorry, but it looks like you're using a **Canadian postal code**. At this time, we do not support CAN addresses within the digital platform.
+
+If this was intentional, please call **1-800-252-4633** to speak with an agent. Otherwise, you can **try again**.",button,<<fal fa-undo>> Try again~1163,1,disable_input,,,,,,,,,,,,,
+11662,D,ADDR2 - Non-numeric,,,,,,"I'm sorry, but it looks like the second line of your address (usually the unit or apartment number) wasn't in the **format** we're looking for. 
+
+Please omit words like 'Apt' or 'Unit' and try again using something like this:
+**35, #201, 4B**",button,<<fal fa-undo>> Try again~1163,1,disable_input,,,,,,,,,,,,,
+1167,D,Policy address webview error message,,,,,1168,"I'm sorry, but to continue we will need your **policy address** to file a claim.",,,,,,,,,,,,,,,,,
+1168,D,Policy address webview error message - Part 2,,,,,,Would you like to try again?,button,<<fal fa-undo>> Try again~1165,1,disable_input,,,,,,,,,,,,,
+11663,D,Address intake widget - Apt # True,,,,,,"**{POLICYADDR1}, Apt/Unit {POLICYADDR2}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-check>> This address is correct~118|
+<<far fa-arrow-alt-circle-left>> Edit address~1163",1,disable_input,,,,,,,,,,,,,
+11664,D,OffPrem - Address intake widget,,,,,,"**{POLICYADDR1}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-check>> This address is correct~118|
+<<far fa-arrow-alt-circle-left>> Edit address~1163",1,disable_input,,,,,,,,,,,,,
+117,D,Coverage Snapshot,,,,,1171,Here's a coverage snapshot for **{POLICY_ADDRESS}**:,,,,,,,,,,,,,,,,,
+1171,D,Coverage Snapshot Display ★,,,,,11711,{POLICY_SUMMARY_STRING},,,,,,,,,,,,,,,,,
+11711,A,AssignVar - COVERAGE_DISPLAYED,,,,,,,,,,,AssignVariable,"This is here so that we can mark if the user saw the coverage snapshot or not.
+
+That way, if the user edits the DOL we can use this global variable to determine if we should show them the snapshot again or not
+
+Ex.) If a user has already seen the coverage snapshot, we don't want to display it again
+Ex.) if the user entered a DOL outside the policy period and they edited it to a date within the policy period we'll want to show them the snapshot. This is a scenario where the user hasn't seen it, but will need to see it if the DOL is within the policy period
+
+Sorry, a lot of run on sentences lol",success,,"{
+        ""set"": {
+                ""COVERAGE_DISPLAYED"": ""true""
+        }
+}",success,true~11712|error~99990,,,COVERAGE_DISPLAYED,,,
+11712,A,CheckQuantumPolicy,,,,,,,,,,,CheckQuantumPolicy,"This action node will check the user's quantum policy type.
+
+If Quantum 2, we display a short disclaimer message to the user. 
+
+If NOT Quantum 1, we skip the disclaimer message and route them down the ""false"" path in the ""What's Next?"" column.",success,,,success,"quantum_2~11721|
+false~1172|
+error~99990",,,QUANTUM_POLICY,,,
+1172,D,Legal disclaimer webview [Q1],,,,,11722,,webview,~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/LegalDisclaimerV4.html?height=130,,inline,,,,,,,,,,,,,
+11721,D,Legal disclaimer webview [Q2],,,,,11722,,webview,~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/LegalDisclaimerQ2.html?height=90,,inline,,,,,,,,,,,,,
+11722,A,"CheckPolicyState
+
+[Virginia]",,,,,,,,,,,CheckPolicyState,"Virginia recently passed a law (1/1/24) that will require us to display additional verbiage when displaying the policy snapshot
+
+
+If the user's policy address is in Virginia, we will display an additional webview that says: ""*Virginia: Your policy limits may be higher than shown above as affected by statue.""
+
+We will display this regardless of Quantum Policy type (QTM or Q2)",success,,,success,"virginia~11723|
+false~1173|
+error~99990",,,POLICYADDRSTATE,,,
+11723,D,Virginia legal disclaimer webview,,,,,1173,,webview,~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/VirginiaDisclaimerLanguage.html?height=40,,inline,,,,,,,,,,,,,
+1173,D,Coverage Snapshot - Part 3,,,,,,Would you like to proceed with **filing a claim**?,button,"<<far fa-file-plus>> Yes, file a claim~118|
+<<far fa-ban>> No, end chat~1180",1,disable_input,,,,,,,,,,,,,
+118,A,VarCheck - Entered Policy ADDR Y/N,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""FORM_ID""}",valid,true~1182|false~1192|error~99990,,,FORM_ID,,,
+1180,A,"PostEventToBQ → Forced Out (User declined after policy snapshot)
+
+✓",,,,,,,,,,,PostEventToBQ,User declined after seeing the policy snapshot :'(,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Forced Out"",
+        ""forced_out_reason"": ""Policy Snapshot Decline"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~666|hidden_flow~666|error~99990,,,SESSION_ID,,,
+1182,A,VarCheck - Apt #,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICYADDR2""}",valid,true~11820|false~11821|error~99990,,,POLICYADDR2,,,
+11820,D,"Policy Information Summary (Entered ADDR Manually, APT True)",,,,,,"We're about to proceed with filing a claim. In the next section, we'll collect your **contact information**.
+
+Before we move on, please verify that the information you've entered so far is correct:
+
+Incident Date: **{USER_DOL}**
+
+Policy Address:
+**{POLICYADDR1}, Apt/Unit {POLICYADDR2}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**",button,"<<far fa-check>> This information is correct~1192|
+<<fal fa-calendar>> Edit incident date~118200|
+<<fal fa-map-marker-alt>> Edit policy address~1163",1,disable_input,,,,,,,,,,,,,
+118200,A,EDIT | INCIDENT DATE,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Policy1""
+  }
+}",success,true~80|error~99990,,,SUMMARY_RETURN,,,
+11821,D,"Policy Information Summary (Entered ADDR Manually, APT False)",,,,,,"We're about to proceed with filing a claim. In the next section, we'll collect your **contact information**.
+
+Before we move on, please verify that the information you've entered so far is correct:
+
+Incident Date: **{USER_DOL}**
+
+Policy Address:
+**{POLICYADDR1}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**",button,"<<far fa-check>> This information is correct~1192|
+<<fal fa-calendar>> Edit incident date~118210|
+<<fal fa-map-marker-alt>> Edit policy address~1163",1,disable_input,,,,,,,,,,,,,
+118210,A,EDIT | INCIDENT DATE,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Policy2""
+  }
+}",success,true~80|error~99990,,,SUMMARY_RETURN,,,
+1192,A,"PostEventToBQ - phase_1_end / user's policy type
+
+✓",,,,,,,,,,,PostEventToBQ,"Phase 1 End
+
+User's policy type (ex. QTM)",success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 1 End"",
+        ""policy_type"": ""{QUANTUM_POLICY}"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~121|hidden_flow~121|error~99990,,,"QUANTUM_POLICY,SESSION_ID",,,
+121,D,Who's Reporting,,,,,,Please help me understand **who** is filing the claim.,button,"<<far fa-user>> Insured policyholder~1210|
+<<far fa-user-headset>> Agent on behalf of insured~1210|
+<<far fa-question-circle>> Other~1210",1,disable_input,,,,,,,,,,CLAIM_FILER,,,
+1210,A,GetValue - CLAIM_FILER,,,,,,,,,,,GetValue,,success,,"{""global_vars"":""CLAIM_FILER""}",success,true~12100|false~99990|error~99990,,,CLAIM_FILER,,,
+12100,A,CheckEligibility,,,,,,,,,,,CheckEligibility,"If the user is QTM1 and Insured then ""ELIGIBLE"" is set to ""Yes"", else ""No"" 
+
+- Lucas waz here (9/14/23)",success,,,success,true~121001|error~99990,,,"CLAIM_FILER,QUANTUM_POLICY,ELIGIBILITY",,,
+121001,A,"PostEventToBQ → Phase 2 Start / Eligibility / Policy Type
+
+✓",,,,,,,,,,,PostEventToBQ,"Phase 2 Start
+
+
+- If the user is Insured and has a QTM policy type, ""ELIGIBILITY"" will be Yes",success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 2 Start"",
+        ""eligible"": ""{ELIGIBILITY}"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~121002|error~99990,,,"ELIGIBILITY,SESSION_ID",,,
+121002,A,"PostEventToBQ → Personas
+
+✓",,,,,,,,,,,PostEventToBQ,"Persona (Agent, Insured, Other)",success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Persona"",
+        ""persona"": ""{CLAIM_FILER}"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~12101|error~99990,,,"CLAIM_FILER,SESSION_ID",,,
+12101,A,"PostToBQTable→ claim_filer
+
+✓",,,,,,,,,,,PostToBQTable,"Posts to BQ Table the event ""claim_filer""",success,,"{
+  ""event"": ""claim_filer""
+}",success,true~12102|false~12102|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,ORIGINATOR,CLAIM_FILER",,,
+12102,A,MultiMatchRoutingContains - CLAIM_FILER,,,,,,,,,,,MultiMatchRoutingContains,,valid,,"{
+        ""global_vars"": ""CLAIM_FILER"",
+        ""input_vars"": ""Insured policyholder,Agent on behalf of insured,Other""
+}",valid,insuredpolicyholder~131|agentonbehalfofinsured~122|other~1211|error~99990,,,CLAIM_FILER,,,
+1211,A,AssignVar - OtherFiler,,,,,,,,,,,AssignVariable,"This is here so that we can mark if the user saw the coverage snapshot or not.
+
+That way, if the user edits the DOL we can use this global variable to determine if we should show them the snapshot again or not
+
+Ex.) If a user has already seen the coverage snapshot, we don't want to display it again
+Ex.) if the user entered a DOL outside the policy period and they edited it to a date within the policy period we'll want to show them the snapshot. This is a scenario where the user hasn't seen it, but will need to see it if the DOL is within the policy period
+
+Sorry, a lot of run on sentences lol",success,,"{
+        ""set"": {
+                ""OTHER_FILER"": ""Yes""
+        }
+}",success,true~122|error~99990,,,OTHER_FILER,,,
+122,D,Agent - Name,,,,1,1221,Could you please enter **your** full name below?,,,1,,,,,,,,,,,AGENT_FULLNAME,,,
+1221,A,ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""AGENT_FULLNAME"",""firstname_output"":""AGENT_FIRSTNAME"",""lastname_output"":""AGENT_LASTNAME""}",valid,true~1224|false~1223|error~1223,,,"AGENT_FULLNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+1223,D,Name fail - Ask for name again,,,,,,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",button,<<far fa-undo>> Try again~122,1,disable_input,,,,,,,,,,AGENT_FULLNAME,,,
+1224,D,Agent - Confirm Name,,,,,,"Thank you, your name has been recorded as **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**.",button,"<<far fa-arrow-alt-circle-right>> Continue~13|
+<<far fa-edit>> Edit name~122",1,disable_input,,,,,,,,,,,,,
+1230,D,Insured Phone Number,,,,1,1231,Thank you **{AGENT_FIRSTNAME}**. What's the **phone number** of the policyholder?,,,1,,,,,,,,,,,PHONE,,,
+1231,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~1233|false~1232|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+1232,D,Phone validation failed,,,,,,"I'm sorry, it doesn't look like you've entered a valid phone number. Would you like to try again?",button,<<far fa-undo>> Try again~1230,1,disable_input,,,,,,,,,,PHONE,,,
+1233,A,FormatPhone,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~124|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+124,D,Confirm Phone Number,,,,,,Please confirm the insured's phone number is **{PHONE_FORMATTED}**.,button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1241|
+<<far fa-edit>> Edit phone number~1230",1,disable_input,,,,,,,,,,,,,
+1241,D,Insured's email,,,,1,12410,What **email** should we send the claim confirmation to?,,,1,,,,,,,,,,,EMAIL,,,
+12410,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~1242|false~12411|error~99990,,,EMAIL,,,
+12411,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~1241|
+<<far fa-times>> I don't have an email address~12412",1,disable_input,,,,,,,,,,,,,
+12412,A,AssignVar - EMAIL (User has no email address),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""EMAIL"": ""N/A""
+  }
+}",success,true~1242|error~99990,,,EMAIL,,,
+1242,D,Do you know the email address of the insured?,,,,,,"Finally, do you know the **email address** of the insured person you're filing the claim on behalf of?",button,"<<far fa-check>> Yes, I do~12420|
+<<far fa-times>> No, I don't have their email~1346",1,disable_input,,,,,,,,,,,,,
+12420,D,Insured Email Collection,,,,1,12421,Please enter the **insured person's email address** now.,,,1,,,,,,,,,,,INSURED_EMAIL,,,
+12421,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""INSURED_EMAIL""}",valid,true~1346|false~12422|error~99990,,,INSURED_EMAIL,,,
+12422,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~12420|
+<<far fa-times>> No, I don't have their email~1346",1,disable_input,,,,,,,,,,,,,
+13,D,Insured Name,,,,1,1300,Please provide the **policyholder's** full name below:,,,1,,,,,,,,,,,FULLNAME,,,
+1300,A,ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""FULLNAME"",""firstname_output"":""FIRSTNAME"",""lastname_output"":""LASTNAME""}",valid,true~1302|false~1301|error~1301,,,"FULLNAME,FIRSTNAME,LASTNAME",,,
+1301,D,Name fail - Ask for full name again,,,,1,132,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",,,1,,,,,,,,,,,FULLNAME,,,
+1302,D,Insured Name - Confirm,,,,,,"Thank you, the policyholder's name has been recorded as **{FIRSTNAME} {LASTNAME}**.",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1230|
+<<far fa-edit>> Edit policyholder's name~13",1,disable_input,,,,,,,,,,,,,
+131,D,Enter Name - Policyholder,,,,1,132,We'll need to collect some information to better assist you. Could you please enter your **full name**?,,,1,,,,,,,,,,,FULLNAME,,,
+132,A,ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""FULLNAME"",""firstname_output"":""FIRSTNAME"",""lastname_output"":""LASTNAME""}",valid,true~1321|false~1323|error~1323,,,"FULLNAME,FIRSTNAME,LASTNAME",,,
+1321,A,AssignVar - INSURED (Used as a flag for Phase 3),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""INSURED"": ""true""
+  }
+}",success,true~1324|error~99990,,,INSURED,,,
+1323,D,Name fail - Ask for full name again,,,,1,132,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",,,1,,,,,,,,,,,FULLNAME,,,
+1324,A,VarCheck - Formatted Phone,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""PHONE_FORMATTED""}",valid,true~1325|false~1571|error~99990,,,PHONE_FORMATTED,,,
+1325,D,Confirm Phone Number,,,,,,"Thank you, your name has been recorded as **{FIRSTNAME} {LASTNAME}**.
+
+Is **{PHONE_FORMATTED}** the best phone number to contact in regards to this claim?",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~13311|
+<<far fa-edit>> Edit phone number~13250|
+<<far fa-edit>> Edit name~131",1,disable_input,,,,,,,,,,,,,
+13250,D,Enter Phone Number,,,,1,1326,Please enter the phone number below.,,,1,,,,,,,,,,,PHONE,,,
+1326,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~1328|false~1327|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+1327,D,Phone validation failed,,,,,,"I'm sorry, it doesn't look like you've entered a valid phone number. Would you like to try another number?",button,<<far fa-undo>> Try again~13250,1,disable_input,,,,,,,,,,PHONE,,,
+1328,A,FormatPhone,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~1325|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+1329,D,Phone Edit Confirm,,,,,,Your phone number has been recorded as {PHONE_FORMATTED}.,button,"<<far fa-arrow-alt-circle-right>> Continue~13311|
+<<far fa-edit>> Edit phone number~13250",1,disable_input,,,,,,,,,,,,,
+13311,D,Email,,,,1,13312,What **email** should we send the claim confirmation to?,,,1,,,,,,,,,,,EMAIL,,,
+13312,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~1345|false~13313|error~99990,,,EMAIL,,,
+13313,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~13311|
+<<far fa-times>> I don't have an email address~13314",1,disable_input,,,,,,,,,,,,,
+13314,A,AssignVar - EMAIL (User has no email address),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""EMAIL"": ""N/A""
+  }
+}",success,true~1345|error~99990,,,EMAIL,,,
+133,A,VarCheck - DOL,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""DOL""}",valid,true~135|false~1332|error~99990,,,DOL,,,
+1332,A,VarCheck - Filer Type,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""AGENT_FULLNAME""}",valid,true~13301|false~1330|error~99990,,,AGENT_FULLNAME,,,
+1330,D,Confirm date of loss - Insured,,,,,,"Thank you, your name has been recorded as **{FIRSTNAME} {LASTNAME}. When** did the theft occur?",button,"<<far fa-calendar>> Select date~134|
+<<far fa-edit>> Edit name~1331",1,disable_input,,,,,,,,,,,,,
+13301,D,Confirm date of loss - Agent/Other,,,,,,"Thank you, the policyholder's name has been recorded as **{FIRSTNAME} {LASTNAME}. When** did the theft occur?",button,"<<far fa-calendar>> Select date~134|
+<<far fa-edit>> Edit name~13302|
+<<far fa-edit>> Edit policyholder's name~131",1,disable_input,,,,,,,,,,,,,
+13302,D,Agent: Edit Own Name,,,,1,13303,Please **re-enter** your full name below.,,,1,,,,,,,,,,,AGENT_FULLNAME,,,
+13303,A,[Orphaned] Agent: Edit Own Name | ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""AGENT_FULLNAME"",""firstname_output"":""AGENT_FIRSTNAME"",""lastname_output"":""AGENT_LASTNAME""}",valid,true~13304|only_firstname~13305|false~99990|error~99990,,,"AGENT_FULLNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+13304,D,Agent: Edit Own Name | Confirm,,,,,,Your name has been updated to **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**. **When** did the theft occur?,button,"<<far fa-calendar>> Select date~134|
+<<far fa-arrow-alt-circle-left>> Go back~13302|
+<<far fa-edit>> Edit policyholder's name~13",1,disable_input,,,,,,,,,,,,,
+13305,D,Agent: Edit Own Name | OnlyFirstName,,,,1,13304,"Thank you, now please enter your **last name** below:",,,1,,,,,,,,,,,AGENT_LASTNAME,,,
+13306,D,Name fail - Ask for name again,,,,,,Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). **Please try again**.,button,<<far fa-undo>> Try again~13302,1,disable_input,,,,,,,,,,AGENT_FULLNAME,,,
+1331,D,Enter Name - Edit,,,,1,132,Please **re-enter** the policyholder's full name below.,,,1,,,,,,,,,,,FULLNAME,,,
+134,D,Custom future-only datepicker (single date),,,,1,1341,,webview,Please select a date~https://preview.pypestream.com/cx/travelers_datepicker_4/index.html?env={ENVIRONMENT}&picker=datepicker&minDate={FIRST_DAY_TWO_YEARS_AGO}&maxDate={CURRENT_DATE},1,,,,,,,,,,,,,,
+1341,A,GetEventsDate,,,,,,,,,,,GetEventsDate,"Action node to retrieve JS events specificially for the custom datepicker hosted here: https://preview.pypestream.com/cx/gf_datepicker/index.html
+
+Input:
+- {""type"":""single""} for single-date version of the datepicker webview
+- {""type"":""range""} for range version of the datepicker webview",success,,"{""type"":""single""}",success,true~1342|false~1342|error~99990,,,"DOL_DISPLAY,DOL",,,
+1342,A,Edit DOL: Validate USER_DOL,,,,,,,,,,,ValidateDate,"'- Validates the date format
+- Optionally checks if the date is the past / future / not past / not future /present / not present.
+- Optionally outputs to a specified date format
+
+Required input:
+- global_var_name: name of input global variable will be validated.
+
+Optional input:
+- output_format: use it if we want to change date format
+- timezone: use timezone if we want to check today in a specified timezone, list of timezone names: https://gist.github.com/heyalexej/8bf688fd67d7199be4a1682b3eec7568
+- compare_with_today: one of these values: past, future, present, not_past, not_future, not_present
+- compare_with_date: supports: before_date, after_date, not_before_date, not_after_date, not_date. We can use one / all of them at once.
+
+Output:
+- success = true --> valid date format with corresponding to compare_with_today value if available.
+- success = false --> invalid date format
+- success = not_past_false, future_false,... correspond to compare_with_today (not_past, future,...) value if availble.
+- success = compare_with_date_false if the compare with dates false
+- success = error --> catch all exception error",valid,,"{
+  ""global_var_name"": ""DOL"",
+  ""compare_with_today"": ""not_future"",
+  ""output_format"": ""%m-%d-%Y"",
+  ""output_reformatted_date"": ""DOL""
+}",valid,true~1344|false~13421|not_future_false~13421|error~99990,,,"DOL,USER_DOL",,,
+13421,D,Edit DOL: ValidateDate - False (Date in future),,,,,,"I'm sorry, it looks like you may have chosen a date in the **future**. Please let us know when the items were stolen.",button,<<far fa-calendar>> Select date~134,1,disable_input,,,,,,,,,,,,,
+1343,A,VarCheck - AGENT_FULLNAME,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""AGENT_FULLNAME""}",valid,true~13432|false~13431|error~99990,,,AGENT_FULLNAME,,,
+13431,D,Confirm date of loss - Edit,,,,,,**When** did the theft occur? Please re-enter the date.,button,"<<far fa-calendar>> Select date~134|
+<<far fa-arrow-alt-circle-left>> Go back~1344",1,disable_input,,,,,,,,,,,,,
+13432,D,Confirm date of loss - Edit | Agent,,,,,,**When** did the theft occur? Please re-enter the date.,button,"<<far fa-calendar>> Select date~134|
+<<far fa-arrow-alt-circle-left>> Go back~1344|
+<<far fa-edit>> Edit policyholder's name~13",1,disable_input,,,,,,,,,,,,,
+1344,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~135|error~135,,,EDIT_MODE,,,
+135,A,VarCheck - Filer Type,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""AGENT_FULLNAME""}",valid,true~1351|false~1352|error~99990,,,AGENT_FULLNAME,,,
+1351,D,"Agent Reporter, Edit Check",,,,,,Thank you **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**. You are creating a claim on behalf of **{FIRSTNAME} {LASTNAME}**. Is this correct?,button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1350|
+<<far fa-edit>> Edit my name~13511|
+<<far fa-edit>> Edit policyholder's name~13516",1,disable_input,,,,,,,,,,,,,
+1352,D,"Insured Reporter, Edit Check",,,,,,"Thank you, your name has been recorded as **{FIRSTNAME} {LASTNAME}**.
+
+Your email has been recorded as **{EMAIL}**.",button,"<<far fa-arrow-alt-circle-right>> Continue~1350|
+<<far fa-edit>> Edit my name~13521|
+<<far fa-envelope>> Edit my email~13311",1,disable_input,,,,,,,,,,,,,
+13511,D,Agent: Edit Own Name | Input,,,,1,13512,Please **re-enter** your full name below.,,,1,,,,,,,,,,,AGENT_FULLNAME,,,
+13512,A,Agent: Edit Own Name | ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""AGENT_FULLNAME"",""firstname_output"":""AGENT_FIRSTNAME"",""lastname_output"":""AGENT_LASTNAME""}",valid,true~13513|only_firstname~13514|false~13515|error~13515,,,"AGENT_FULLNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+13513,D,Agent: Edit Own Name | Confirm,,,,,,Your name has been updated to **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**.,button,<<far fa-arrow-alt-circle-right>> Continue~1351,1,disable_input,,,,,,,,,,,,,
+13514,D,Agent: Edit Own Name | OnlyFirstName,,,,1,13513,"Thank you, now please enter your **last name** below:",,,1,,,,,,,,,,,AGENT_LASTNAME,,,
+13515,D,Agent: Name Fail | Ask for name again,,,,,,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",button,<<far fa-undo>> Try again~13511,1,disable_input,,,,,,,,,,AGENT_FULLNAME,,,
+13516,D,Agent: Edit PH Name | Input,,,,1,13517,Please **re-enter** their full name below.,,,1,,,,,,,,,,,FULLNAME,,,
+13517,A,Agent: Edit PH Name | ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""FULLNAME"",""firstname_output"":""FIRSTNAME"",""lastname_output"":""LASTNAME""}",valid,true~13518|only_firstname~13519|false~13520|error~13520,,,"FULLNAME,FIRSTNAME,LASTNAME",,,
+13518,D,Agent: Edit PH Name | Confirm,,,,,,The policyholder's name has been updated to **{FIRSTNAME} {LASTNAME}**.,button,<<far fa-arrow-alt-circle-right>> Continue~1351,1,disable_input,,,,,,,,,,,,,
+13519,D,Agent: Edit PH Name | OnlyFirstName,,,,1,13513,"Thank you, now please enter their **last name** below:",,,1,,,,,,,,,,,LASTNAME,,,
+13520,D,Agent: Name Fail | Ask for PH name again,,,,,,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",button,<<far fa-undo>> Try again~13516,1,disable_input,,,,,,,,,,FULLNAME,,,
+13521,D,Edit Own Name | Input,,,,1,13522,Please **re-enter** your full name below.,,,1,,,,,,,,,,,FULLNAME,,,
+13522,A,Edit Own Name | ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""FULLNAME"",""firstname_output"":""FIRSTNAME"",""lastname_output"":""LASTNAME""}",valid,true~13523|only_firstname~13524|false~13525|error~13525,,,"FULLNAME,FIRSTNAME,LASTNAME",,,
+13523,D,Edit Own Name | Confirm,,,,,,Your name has been updated to **{FIRSTNAME} {LASTNAME}**.,button,<<far fa-arrow-alt-circle-right>> Continue~1350,1,disable_input,,,,,,,,,,,,,
+13524,D,Edit Own Name | OnlyFirstName,,,,1,13523,"Thank you, now please enter your **last name** below:",,,1,,,,,,,,,,,LASTNAME,,,
+13525,D,Name Fail | Ask for name again,,,,,,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",button,<<far fa-undo>> Try again~13521,1,disable_input,,,,,,,,,,FULLNAME,,,
+1345,D,Contact Info Summary - Insured (1),,,,,,"Thank you for providing your **contact information**. In the next section, we'll collect information about **how the incident occured**.
+
+Before we move on, please verify that the information you've entered in this section is correct:
+
+Insured Name: **{FIRSTNAME} {LASTNAME}**
+Contact Number: **{PHONE_FORMATTED}**
+Email Address: **{EMAIL}**",button,"<<far fa-check>> This information is correct~1350|
+<<far fa-edit>> I need to make an edit~134500",1,disable_input,,,,,,,,,,,,,
+134500,D,EDIT HOME - 1,,,,,,,button,"<<far fa-user>> Insured Name~13450|
+<<far fa-phone>> Contact Number~13451|
+<<far fa-envelope>> Email~13452",1,disable_input,,,,,,,,,,,,,
+13450,A,EDIT | INSURED NAME,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact1""
+  }
+}",success,true~81|error~99990,,,SUMMARY_RETURN,,,
+13451,A,EDIT | CONTACT NUMBER,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact1""
+  }
+}",success,true~82|error~99990,,,SUMMARY_RETURN,,,
+13452,A,EDIT | EMAIL,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact1""
+  }
+}",success,true~83|error~99990,,,SUMMARY_RETURN,,,
+1346,A,VarCheck - Insured's Email,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""INSURED_EMAIL""}",valid,true~1348|false~1347|error~99990,,,INSURED_EMAIL,,,
+1347,D,Contact Info Summary - Agent/Other - No Insured Email (2),,,,,,"Thank you for providing your **contact information**. In the next section, we'll collect information about **how the incident occured**.
+
+Before we move on, please verify that the information you've entered in this section is correct:
+
+Your Name: **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**
+Policyholder's Name: **{FIRSTNAME} {LASTNAME}**
+Contact Number: **{PHONE_FORMATTED}**
+Contact Email Address: **{EMAIL}**",button,"<<far fa-check>> This information is correct~1350|
+<<far fa-edit>> I need to make an edit~134700",1,disable_input,,,,,,,,,,,,,
+134700,D,EDIT HOME - 2,,,,,,,button,"<<far fa-user>> Your Name~13470|
+<<far fa-user>> Policyholder's Name~13471|
+<<far fa-phone>> Contact Number~13472|
+<<far fa-envelope>> Contact Email Address~13473",1,disable_input,,,,,,,,,,,,,
+13470,A,EDIT | AGENT NAME,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact2""
+  }
+}",success,true~84|error~99990,,,SUMMARY_RETURN,,,
+13471,A,EDIT | INSURED NAME,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact2""
+  }
+}",success,true~81|error~99990,,,SUMMARY_RETURN,,,
+13472,A,EDIT | CONTACT NUMBER,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact2""
+  }
+}",success,true~82|error~99990,,,SUMMARY_RETURN,,,
+13473,A,EDIT | EMAIL,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact2""
+  }
+}",success,true~83|error~99990,,,SUMMARY_RETURN,,,
+1348,D,Contact Info Summary - Agent/Other - Insured Email (3),,,,,,"Thank you for providing your **contact information**. In the next section, we'll collect information about **how the incident occured**.
+
+Before we move on, please verify that the information you've entered in this section is correct:
+
+Your Name: **{AGENT_FIRSTNAME} {AGENT_LASTNAME}**
+Policyholder's Name: **{FIRSTNAME} {LASTNAME}**
+Contact Number: **{PHONE_FORMATTED}**
+Contact Email Address: **{EMAIL}**
+Policyholder's Email Address: **{INSURED_EMAIL}**",button,"<<far fa-check>> This information is correct~1350|
+<<far fa-edit>> I need to make an edit~134800",1,disable_input,,,,,,,,,,,,,
+134800,D,EDIT HOME - 3,,,,,,,button,"<<far fa-user>> Your Name~13481|
+<<far fa-user>> Policyholder's Name~13480|
+<<far fa-phone>> Contact Number~13482|
+<<far fa-envelope>> Contact Email~13483|
+<<far fa-envelope>> Policyholder's Email Address~13484",1,disable_input,,,,,,,,,,,,,
+13480,A,EDIT | INSURED NAME,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact3""
+  }
+}",success,true~81|error~99990,,,SUMMARY_RETURN,,,
+13481,A,EDIT | AGENT NAME,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact3""
+  }
+}",success,true~84|error~99990,,,SUMMARY_RETURN,,,
+13482,A,EDIT | CONTACT NUMBER,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact3""
+  }
+}",success,true~82|error~99990,,,SUMMARY_RETURN,,,
+13483,A,EDIT | EMAIL,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact3""
+  }
+}",success,true~83|error~99990,,,SUMMARY_RETURN,,,
+13484,A,EDIT | INSURED EMAIL,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""SUMMARY_RETURN"": ""Contact3""
+  }
+}",success,true~85|error~99990,,,SUMMARY_RETURN,,,
+1350,D,Ask if policy address same as theft,,,,,,"Please confirm if the address where the items were stolen is the **same** as the policy address below.
+
+**{POLICYADDR1}
+{POLICYADDRCITY} {POLICYADDRSTATE}, {POLICYADDRPOSTAL}**",button,"<<far fa-map-marker-alt>> Same address~1431|
+<<fal fa-map-marker-alt-slash>> Different address~144|
+<<far fa-question-circle>> I don't know the exact address~13500",1,disable_input,,,,,,,,,,POLICY_ADDRESS,,,
+13500,D,No Exact Address,,,,1,13501,"**No exact address.**
+
+That's OK, we just need the **city** and **state** to proceed. Please enter it now.
+
+*(ex. Los Angeles, CA)*",,,1,,,,,,,,,,,LOCATIONSTRING,,,
+13501,A,ValidateCityState,,,,,,,,,,,ValidateCityState,,valid,,,valid,true~13503|false~13504|error~99990,,,"LOCATIONSTRING,LAT,LNG,ADDR1,ADDR2,ADDRCITY,ADDRSTATE,ADDRPOSTAL,LOCATIONCITY,LOCATIONSTATE",,,
+13503,A,AssignVars - No Exact Address,,,,,,,,,,,AssignVariable,"Assign City and State, hardcode the rest of the values",success,,"{
+        ""set"": {
+                ""THEFTADDR_PRETTY"": ""Unknown"",
+                ""THEFTADDR1"": ""Unknown"",
+                ""THEFTADDRCITY"": ""LOCATIONCITY"",
+                ""THEFTADDRSTATE"": ""LOCATIONSTATE"",
+                ""THEFTCOUNTRY"": ""US""
+        }
+}",success,true~13505|error~99990,,,"THEFTADDR_PRETTY,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRCITY,THEFTADDRPOSTAL,THEFTCOUNTRY,LOCATIONCITY,LOCATIONSTATE",,,
+13504,D,Error,,,,1,13501,"Hmm, there seems to be an issue with the formatting or inclusion of special characters. Please try entering the **city and state** again now.
+
+Example: **Chicago, IL**",,,1,,,,,,,,,,,LOCATIONSTRING,,,
+13505,D,"Testing, var check",,,,,,"The theft occured in **{LOCATIONCITY}, {LOCATIONSTATE}**. Does that look right?",button,"<<far fa-check>> That's correct~144|
+<<far fa-times>> No, go back~13500",1,disable_input,,,,,,,,,,,,,
+136,A,SetEnv,,,,,,,,,,,SetEnv,"Sets a global var called ENVIRONMENT equal to the runtime environment we're in. 
+
+I.E. ENVIRONMENT will normally be set to either ""sandbox"" or ""live"".",success,,,success,true~1361|error~99990,,,ENVIRONMENT,,,
+1361,A,SetFormID,,,,,,,,,,,SetFormID,"This action node used in conjunction with many embedded webviews. In case a solution has multiple webviews that send JS events to the solution, this action node ensures that they do not get mixed up. It assigns a specific for ID to an upcoming webview, so that events coming from that webview will be associated with this specific ID. 
+
+In essense, this script simply increments FORM_ID by 1, or sets it equal to 1 if it doesn't exist yet.",success,,,success,true~14|error~99990,,,FORM_ID,,,
+14,D,Address intake widget,,,,1,141,,webview,Enter your policy address~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/TravelersAddressForm.html?env={ENVIRONMENT}&formId={FORM_ID}&output=svembed&height=220,1,,,,,,,,,,,,,,
+141,A,GetAddressFromForm,,,,,,,,,,,GetAddressFromForm,,success,,"{
+  ""full_display_address"": ""POLICYADDR_PRETTY"",
+  ""address_line_1"": ""POLICYADDR1"",
+  ""address_line_2"": ""POLICYADDR2"",
+  ""city"": ""POLICYADDRCITY"",
+  ""state"": ""POLICYADDRSTATE"",
+  ""city"": ""POLICYADDRCITY"",
+  ""postal_code"": ""POLICYADDRPOSTAL"",
+  ""country"": ""POLICYCOUNTRY""
+}",success,true~1411|error~1422,,,"FORM_ID,POLICYADDR_PRETTY,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYCOUNTRY",,,
+1410,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~1411|error~1411,,,EDIT_MODE,,,
+1411,A,VarCheck - Apt #,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICYADDR2""}",valid,true~142|false~1421|error~99990,,,POLICYADDR2,,,
+142,D,Policy Address Confirmation - Apt # True,,,,,,"**{POLICYADDR1}, Apt/Unit {POLICYADDR2}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1423|
+<<far fa-times>> Try another address~14|
+<<far fa-arrow-alt-circle-left>> Go back~1344",1,disable_input,,,,,,,,,,,,,
+1421,D,Policy Address Confirmation - No Apt #,,,,,,"**{POLICYADDR1}**
+**{POLICYADDRCITY}, {POLICYADDRSTATE} {POLICYADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1423|
+<<far fa-times>> Try another address~14|
+<<far fa-arrow-alt-circle-left>> Go back~1344",1,disable_input,,,,,,,,,,,,,
+1422,D,Address intake widget - Error,,,,,,"I'm sorry, I wasn't able to locate that address. Would you like to try again?",button,"<<far fa-map>> Try another address~14|
+<<far fa-arrow-alt-circle-left>> Go back~1344",1,disable_input,,,,,,,,,,,,,
+1423,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~143|error~99990,,,EDIT_MODE,,,
+143,D,Policy + Theft Address Check,,,,,,Is the theft address the **same** as the policy address?,button,"<<far fa-map-marker-alt>> Same address~1431|
+<<far fa-map-marker-alt-slash>> Different address~144",1,disable_input,,,,,,,,,,,,,
+1431,A,AssignVar - Theft On Premise: Y,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""THEFT_ONPREMISE"": ""Yes""
+  }
+}",success,true~1432|error~99990,,,THEFT_ONPREMISE,,,
+1432,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~158|false~15|error~99990,,,EDIT_MODE,,,
+144,A,AssignVar - Theft On Premise: N,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""THEFT_ONPREMISE"": ""No""
+  }
+}",success,true~1440|error~99990,,,THEFT_ONPREMISE,,,
+1440,A,VarCheck - LOCATIONSTRING,,,,,,,,,,,VarCheck,Checks to see if the user already indicated they don't have an exact address and skips that part of the flow,valid,,"{""global_var_name"":""LOCATIONSTRING""}",valid,true~15|false~1441|error~99990,,,LOCATIONSTRING,,,
+1441,D,Theft Off Premise,,,,,,Let's get the address where the **theft** took place.,button,<<fal fa-check>> Continue~1442,1,disable_input,,,,,,,,,,,,,
+1442,A,OffPrem - SetEnv,,,,,,,,,,,SetEnv,"Sets a global var called ENVIRONMENT equal to the runtime environment we're in. 
+
+I.E. ENVIRONMENT will normally be set to either ""sandbox"" or ""live"".",success,,,success,true~1443|error~99990,,,ENVIRONMENT,,,
+1443,A,OffPrem - SetFormID,,,,,,,,,,,SetFormID,"This action node used in conjunction with many embedded webviews. In case a solution has multiple webviews that send JS events to the solution, this action node ensures that they do not get mixed up. It assigns a specific for ID to an upcoming webview, so that events coming from that webview will be associated with this specific ID. 
+
+In essense, this script simply increments FORM_ID by 1, or sets it equal to 1 if it doesn't exist yet.",success,,,success,true~145|error~99990,,,FORM_ID,,,
+145,D,OffPrem - Address intake widget,,,,1,1451,,webview,Enter the theft address~https://preview.pypestream.com/cx/web-embed/address-form/address_form_v2.0.html?env={ENVIRONMENT}&formId={FORM_ID},1,,,,,,,,,,,,,,
+1451,A,OffPrem - GetAddressFromForm,,,,,,,,,,,GetAddressFromForm,,success,,"{
+  ""full_display_address"": ""THEFTADDR_PRETTY"",
+  ""address_line_1"": ""THEFTADDR1"",
+  ""address_line_2"": ""THEFTADDR2"",
+  ""city"": ""THEFTADDRCITY"",
+  ""state"": ""THEFTADDRSTATE"",
+  ""postal_code"": ""THEFTADDRPOSTAL"",
+  ""country"": ""THEFTCOUNTRY""
+}",success,true~1452|error~14511,,,"FORM_ID,THEFTADDR_PRETTY,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRCITY,THEFTADDRPOSTAL,THEFTCOUNTRY",,,
+14511,D,Theft address webview error message,,,,,14512,"I'm sorry, but to continue we will need the address where the **theft** occurred to file a claim.",,,,,,,,,,,,,,,,,
+14512,D,Theft address webview error message - Part 2,,,,,,Would you like to try again?,button,<<far fa-undo>> Try again~1442,1,disable_input,,,,,,,,,,,,,
+1452,A,VarCheck - Apt #,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""THEFTADDR2""}",valid,true~14520|false~1454|error~99990,,,THEFTADDR2,,,
+14520,A,SearchTextForRegex - ADDR2,,,,,,,,,,,SearchTextForRegEx,,found_regex,,"{
+    ""input_text"":""THEFTADDR2"",
+    ""output_var"":""THEFTADDR2_OUTPUT"",
+    ""regex"":""^[\\#]?[1-9]?\\d*(\\s*[-\/]\\s*[1-9]\\d*)?(\\s?[a-zA-Z])?[1-9]*(\\s?[1-9]*[\/]{1}[1-9]*)?$""
+}",found_regex,true~1453|false~14521|error~99990,,,"THEFTADDR2,THEFTADDR2_OUTPUT",,,
+14521,D,ADDR2 - Non-numeric,,,,,,"I'm sorry, but it looks like the second line of your address (usually the unit or apartment number) wasn't in the **format** we're looking for. 
+
+Please omit words like 'Apt' or 'Unit' and try again using something like this:
+**35, #201, 4B**",button,<<far fa-undo>> Try again~1442,1,disable_input,,,,,,,,,,,,,
+1453,D,Address intake widget - Apt # True,,,,,,"**{THEFTADDR1}, Apt/Unit {THEFTADDR2}**
+**{THEFTADDRCITY}, {THEFTADDRSTATE} {THEFTADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-check>> This address is correct~146|
+<<far fa-arrow-alt-circle-left>> Go back~1423",1,disable_input,,,,,,,,,,,,,
+1454,D,OffPrem - Address intake widget,,,,,,"**{THEFTADDR1}**
+**{THEFTADDRCITY}, {THEFTADDRSTATE} {THEFTADDRPOSTAL}**
+
+Please confirm this address is accurate.",button,"<<far fa-check>> This address is correct~146|
+<<far fa-arrow-alt-circle-left>> Go back~1423",1,disable_input,,,,,,,,,,,,,
+1455,D,OffPrem - Address intake widget,,,,,,"I'm sorry, I encountered an error retrieving the **address**. Please click **go back** to return to address selection.",button,<<far fa-arrow-alt-circle-left>> Go back~1423,1,disable_input,,,,,,,,,,,,,
+146,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~158|false~15|error~99990,,,EDIT_MODE,,,
+15,D,Building damage,,,,,,Was there any **damage** to the building or home related to this incident?,button,"<<far fa-house-damage>> Yes~1501|
+<<far fa-home>> No~1502",1,disable_input,,,,,,,,,,,,,
+1501,A,AssignVariable - Building Damage == true,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""BUILDINGDAMAGE"": ""True""
+  }
+}",success,true~156|error~99990,,,BUILDINGDAMAGE,,,
+1502,A,AssignVariable - Building Damage == false,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""BUILDINGDAMAGE"": ""False""
+  }
+}",success,true~156|error~99990,,,BUILDINGDAMAGE,,,
+151,D,Building damage - type,,,,,,Was the **damage** to the interior or exterior?,button,"Interior~1511|
+Exterior~1511|
+Both~1511",1,disable_input,,,,,,,,,,BUILDINGDAMAGE,,,
+1511,A,GetValue,,,,,,,,,,,GetValue,,success,,"{""global_vars"":""BUILDINGDAMAGE""}",success,true~1521|false~99990,,,BUILDINGDAMAGE,,,
+152,A,AssignVariable - No Building Damage,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""BUILDINGDAMAGE"": ""No damage""
+  }
+}",success,true~1521|error~99990,,,BUILDINGDAMAGE,,,
+1521,A,CheckVar/Multimatch - Building Damage,,,,,,,,,,,MultiMatchRouting,"Check if a Variable matches a value. Allow the solution designer to be able to input multiple potential values in a comma separated list in the Parameter Input column.
+- If Variable matches any of the values, set valid to that value
+- If Variable does not match any of the input values, then valid will be set to false.
+
+NOTE: the decision value must be lowercase without space. CAN ONLY INCLUDE lowercase letters, digits, and underscore.
+
+Example:
+Paramater Input: {""global_vars"":""TOPIC"",""input_vars"":""Diversity & Inclusion,Gender Equality""}
+What's Next?
+diversityinclusion~2974|genderequality~2974|false~2976|error~99990",valid,,"{""global_vars"":""BUILDINGDAMAGE"",""input_vars"":""Interior,Both""}",valid,interior~153|both~1522|false~154|error~99990,,,BUILDINGDAMAGE,,,
+1522,A,AssignVariable - Interior and Exterior,,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""BUILDINGDAMAGE"": ""Interior and Exterior""
+  }
+}",success,true~153|error~99990,,,BUILDINGDAMAGE,,,
+153,D,Building Damage - Rooms,,,,,,Did the **damage** occur in one or more rooms?,button,"One room~1531|
+More than one room~1531",1,disable_input,,,,,,,,,,BUILDINGDAMAGE_ROOMS,,,
+1531,A,GetValue,,,,,,,,,,,GetValue,,success,,"{""global_vars"":""BUILDINGDAMAGE_ROOMS""}",success,true~1532|false~99990,,,BUILDINGDAMAGE_ROOMS,,,
+1532,A,VarCheck - Room Damage,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""BUILDINGDAMAGE_ROOMS""}",valid,true~155|false~154|error~99990,,,BUILDINGDAMAGE_ROOMS,,,
+154,D,Building Damage - Confirm,,,,,,"Thank you, please confirm the information below:
+
+Building damage: **{BUILDINGDAMAGE}**",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~156|
+<<far fa-edit>> Edit building damage~1541",1,disable_input,,,,,,,,,,,,,
+1541,A,VariableReset - Building Damage,,,,,,,,,,,VariableReset,,success,,,success,true~15|error~15,,,BUILDINGDAMAGE_ROOMS,,,
+155,D,Building Damage Rooms - Confirm,,,,,,"Thank you, please confirm the information below:
+
+Building damage: **{BUILDINGDAMAGE}**
+Rooms damaged: **{BUILDINGDAMAGE_ROOMS}**",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~156|
+<<far fa-edit>> Edit building damage~1551",1,disable_input,,,,,,,,,,,,,
+1551,A,VariableReset - Building Damage & Rooms,,,,,,,,,,,VariableReset,,success,,,success,true~15|error~15,,,"BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS",,,
+156,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~158|false~1560|error~99990,,,EDIT_MODE,,,
+1560,D,Loss Summary,,,,,,"Next, we will need a short summary of **how the incident occurred**. You do not need to list stolen items here, you will have an opportunity to itemize later.
+
+(e.g. my house was broken into and some possessions were stolen)",button,<<fal fa-arrow-alt-circle-right>> Continue~1561,1,disable_input,,,,,,,,,,,,,
+1561,A,SetEnv,,,,,,,,,,,SetEnv,,success,,,success,true~15611|error~99990,,,ENVIRONMENT,,,
+15611,D,LossDescription Webview,,,,1,15612,,webview,Explain what happened~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/LossDescriptionFormV3.html?text={LOSS_SUMMARY}&env={ENVIRONMENT},1,,,,,,,,,,,,,,
+15612,A,EventsToGlobalVariableValues,,,,,,,,,,,EventsToGlobalVariableValues,,success,,"{
+  ""event_mapping"": {
+        ""form"": {
+            ""LOSS_SUMMARY"": ""LOSS_SUMMARY""
+        }
+  }
+}",success,true~156121|false~15613|error~15613,,,LOSS_SUMMARY,,,
+156121,A,CheckLossSummary,,,,,,,,,,,CheckLossSummary,"Checks if the loss summary is blank/empty. If it is, we'll tell the user they can't leave that field blank.",success,,,success,true~15614|false~15613|regex_fail~1563|char_fail~1564|error~15613,,,LOSS_SUMMARY,,,
+15613,D,Loss summary webview - error,,,,,,"I'm sorry, but to continue we will need a summary of the loss. Would you like to try again?",button,<<far fa-undo>> Try again~1561,1,disable_input,,,,,,,,,,,,,
+15614,D,Loss summary,,,,,,"Thank you, please confirm the information below to continue:
+
+Loss summary: **{LOSS_SUMMARY}**",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~1565|
+<<far fa-edit>> Edit loss summary~1561",1,disable_input,,,,,,,,,,,,,
+1562,A,Loss Summary - SearchTextForRegex,,,,,,,,,,,SearchTextForRegEx,"Searches a variable (e.g. a user utterance) for any portion matching a regex rule. If it finds a match, it stores the matching portion and sets found_regex = true. Else, found_regex = false.
+
+In the parameter input, ""input_text"" indicates the global variable that should be searched for the regex rule, ""output_var"" indicates which global variable should be assigned with the matching portion (could optionally be set to the same variable as ""input_text"" if we only care about the matched portion), and ""regex"" is the specific regex rule the script will validate.
+
+If we want to ensure the variable is exactly equal to a certain format (as opposed to just containing it), then we can add ""^"" at the beginning and ""$"" at the end of the regex rule.
+
+Tip: you can configure and test out regex rules here: https://regex101.com/",found_regex,,"{""input_text"":""LOSS_SUMMARY"",""output_var"":""LOSS_SUMMARY"",""regex"":""^[a-zA-Z0-9!():.\\s,'' -]*$""}",found_regex,true~15621|false~1563|error~99990,,,LOSS_SUMMARY,,,
+15621,A,CheckCharacterCount,,,,,,,,,,,CheckCharacterCount,,success,,,success,true~1565|false~1564|error~99990,,,LOSS_SUMMARY,,,
+1563,D,Loss Summary - Error (RegEx),,,,,,"I'm sorry, it looks like your description may be using **invalid characters**. Would you like to try again?",button,<<far fa-undo>> Try again~1561,1,disable_input,,,,,,,,,,,,,
+1564,D,Loss Summary - Error (More than 234 characters),,,,,,"I'm sorry, your description has **exceeded the 234 character limit**. Would you like to try again?",button,<<far fa-undo>> Try again~1561,1,disable_input,,,,,,,,,,,,,
+1565,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~158|false~157|error~99990,,,EDIT_MODE,,,
+157,A,VarCheck - Formatted Phone,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""PHONE_FORMATTED""}",valid,true~158|false~1571|error~99990,,,PHONE_FORMATTED,,,
+1571,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~1573|false~1572|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+1572,D,Phone validation failed,,,,,,"I'm sorry, it doesn't look like you've entered a valid phone number. Would you like to try another number?",button,<<far fa-undo>> Try again~1574,1,disable_input,,,,,,,,,,PHONE,,,
+1573,A,FormatPhone,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~158|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+1574,D,Phone # not present,,,,1,1571,Please enter the **policyholder's** phone number.,,,1,,,,,,,,,,,PHONE,,,
+158,A,VariableReset - EDIT_MODE - Change routing to 1580 after demo,,,,,,,,,,,VariableReset,,success,,,success,true~1580|error~99990,,,EDIT_MODE,,,
+1580,A,"CheckInsuredAndPolicy
+
+[Check to see if user moves on to Phase 3]",,,,,,[Action node that checks if the user has a Quantum 1 policy type (QTM) and is insured. If they're both we're gonna take em to Phase 3],,,,,CheckInsuredAndPolicy,User must have Quantum 1 or Quantum 2 policy type and MUST be Insured Policyholder,success,,,success,"eligible~159|
+not_eligible~181|
+error~99990",,,"QUANTUM_POLICY,INSURED",,,
+159,A,IncidentClaimSummary,,,,,,,,,,,IncidentClaimSummary,,success,,,success,true~1590|error~99990,,,"FIRSTNAME,LASTNAME,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,USER_DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,INCIDENT_SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,LOSS_SUMMARY",,,
+1590,D,Incident Info Summary (QTM1),,,,,,"Thank you for providing **information about the incident**. In the last section, we'll collect information about **what was stolen**.
+
+Before we move on, please verify that the information you've entered in this section is correct:
+
+{INCIDENT_SUMMARY_STRING}",button,"<<far fa-check>> This information is correct~15901|
+<<far fa-edit>> I need to make an edit~1591",1,disable_input,,,,,,,,,,,,,
+15901,A,"PostEventToBQ - Phase 2 End (User goes to Phase 3)
+
+✓",,,,,,,,,,,PostEventToBQ,Phase 2 End,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 2 End"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~4|hidden_flow~4|error~99990,,,SESSION_ID,,,
+1591,D,EDIT HOME QTM1,,,,,,,button,"<<far fa-map-marked>> Theft address~198|
+<<far fa-house-damage>> Building damage~196|
+<<far fa-file-alt>> Loss summary~1991",1,disable_input,,,,,,,,,,,,,
+16,D,Confirm Phone Number,,,,,,"We're almost finished. 
+
+Is **{PHONE_FORMATTED}** the best phone number to contact in regards to this claim?",button,"<<far fa-arrow-alt-circle-right>> Yes, continue~165|
+<<far fa-edit>> Edit phone number~161|
+<<far fa-arrow-alt-circle-left>> Go back~1560",1,disable_input,,,,,,,,,,,,,
+160,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~1601|false~1621|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+1601,A,FormatPhone - Format new phone #,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~165|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+161,D,Edit phone number,,,,1,162,Please provide the **phone number** below:,,,1,,,,,,,,,,,PHONE,,,
+162,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~163|false~1621|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+1621,D,Phone validation failed,,,,,,It looks like you didn't enter a valid **phone number**. Would you like to try again?,button,"<<far fa-undo>> Try again~161|
+<<far fa-arrow-alt-circle-left>> Go back~146",1,disable_input,,,,,,,,,,,,,
+163,A,FormatPhone - Format new phone #,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~164|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+164,D,Confirm Re-entered Phone Number,,,,,,The contact number has been updated to **{PHONE_FORMATTED}**.,button,"<<far fa-arrow-alt-circle-right>> Continue~165|
+<<far fa-edit>> Edit phone number~161",1,disable_input,,,,,,,,,,,,,
+165,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~170|error~99990,,,EDIT_MODE,,,
+166,A,AWSPhoneValidate,,,,,,,,,,,AWSPhoneValidate,"Validates any phone number (could be international), and returns key details. Note that this action node requires the boto3 Python package (https://pypi.org/project/boto3/) to be installed for the customer container, and requires these fields to be defined in the app.py config:
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+- REGION
+
+Fields returned:
+- cleansed phone -- the E.164 format, e.g. +19144008578
+- country -- the country where the phone number was registered
+- phone type -- could be MOBILE, LANDLINE, VOIP, INVALID, PREPAID, or OTHER.
+
+The action node conveniently could route differently based on whether the number is mobile (e.g. to use for text messaging), any other valid type, or invalid.
+
+API documentation: https://docs.aws.amazon.com/pinpoint/latest/apireference/phone-number-validate.html#phone-number-validatepost",phone_type,,"{
+  ""input_phone"": ""PHONE_FORMATTED"",
+  ""output_cleansed_phone"": ""CLEANSED_PHONE"",
+  ""output_country"": ""AWSPHONECOUNTRY"",
+  ""output_phone_type"": ""PHONE_TYPE""
+}",phone_type,mobile~17|other~17|invalid~1661,,,"PHONE_FORMATTED,CLEANSED_PHONE,AWSPHONECOUNTRY,PHONE_TYPE",,,
+1661,D,Phone # Invalid,,,,,,This phone number looks like it might be **invalid**. Would you like to continue?,button,"<<far fa-arrow-alt-circle-right>> Yes, continue~170|
+<<far fa-undo>> Enter a different number~161",1,disable_input,,,,,,,,,,,,,
+170,A,VarCheck - Email,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EMAIL""}",valid,true~18|false~17|error~99990,,,EMAIL,,,
+17,D,Email,,,,1,171,What **email** should we send the claim confirmation to?,,,1,,,,,,,,,,,EMAIL,,,
+171,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~172|false~1711|error~99990,,,EMAIL,,,
+1711,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~17|
+<<far fa-times>> I don't have an email address~1712",1,disable_input,,,,,,,,,,,,,
+1712,A,AssignVar - EMAIL (User has no email address),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""EMAIL"": ""N/A""
+  }
+}",success,true~172|error~99990,,,EMAIL,,,
+172,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~18|false~173|error~18,,,EDIT_MODE,,,
+173,A,VarCheck - Filer Type,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""AGENT_FULLNAME""}",valid,true~1731|false~18|error~99990,,,AGENT_FULLNAME,,,
+1731,D,Do you know the email address of the insured?,,,,,,"Finally, do you know the **email address** of the insured person you're filing the claim on behalf of?",button,"<<far fa-check>> Yes, I do~1732|
+<<far fa-times>> No, I don't have their email~18",1,disable_input,,,,,,,,,,,,,
+1732,D,Insured Email Collection,,,,1,1733,Please enter the **insured person's email address** now.,,,1,,,,,,,,,,,INSURED_EMAIL,,,
+1733,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""INSURED_EMAIL""}",valid,true~18|false~1734|error~99990,,,INSURED_EMAIL,,,
+1734,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~1732|
+<<far fa-times>> No, I don't have their email~18",1,disable_input,,,,,,,,,,,,,
+175,A,Clean Names,,,,,,,,,,,CleanNames,,success,,,success,true~20|error~99990,,,"FIRSTNAME,LASTNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+18,A,VariableReset - EDIT_MODE,,,,,,,,,,,VariableReset,,success,,,success,true~181|error~99990,,,EDIT_MODE,,,
+181,A,IncidentClaimSummary,,,,,,,,,,,IncidentClaimSummary,,success,,,success,true~182|error~99990,,,"FIRSTNAME,LASTNAME,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,USER_DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,INCIDENT_SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,LOSS_SUMMARY",,,
+182,D,Incident Info Summary (NON QTM1),,,,,,"Can you please verify the information below is correct?
+
+{INCIDENT_SUMMARY_STRING}",button,"<<far fa-check>> Yes, file my claim~2|
+<<far fa-times>> I need to make an edit~1820",1,disable_input,,,,,,,,,,,,,
+1820,D,EDIT HOME - NON-QTM1,,,,,,,button,"<<far fa-map-marked>> Theft address~198|
+<<far fa-house-damage>> Building damage~196|
+<<far fa-file-alt>> Loss summary~1991",1,disable_input,,,,,,,,,,,,,
+19,A,VarCheck - AGENT_FULLNAME,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""AGENT_FULLNAME""}",valid,true~190|false~1900|error~99990,,,AGENT_FULLNAME,,,
+190,A,VarCheck - INSURED_EMAIL,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""INSURED_EMAIL""}",valid,true~1911|false~191|error~99990,,,INSURED_EMAIL,,,
+1900,D,Summary Info Edit - No point of contact,,,,,,What information would you like to **edit**?,button,"<<far fa-arrow-alt-circle-left>> Go back~181|
+<<far fa-user>> Policyholder's name~194|
+<<far fa-calendar>> Theft date~195|
+<<far fa-map>> Policy address~197|
+<<far fa-map-marked>> Theft address~198|
+<<far fa-house-damage>> Building damage~196|
+<<far fa-file-alt>> Loss summary~1991|
+<<far fa-phone>> Contact number~192|
+<<far fa-at>> Email~193",1,disable_input,,,,,,,,,,,,,
+191,D,Summary Info Edit - Point of contact exists and no insured email,,,,,,What information would you like to **edit**?,button,"<<far fa-arrow-alt-circle-left>> Go back~181|
+<<far fa-user-headset>> Agent's name~199|
+<<far fa-user>> Policyholder's name~194|
+<<far fa-calendar>> Theft date~195|
+<<far fa-map>> Policy address~197|
+<<far fa-map-marked>> Theft address~198|
+<<far fa-house-damage>> Building damage~196|
+<<far fa-file-alt>> Loss summary~1991|
+<<far fa-phone>> Contact number~192|
+<<far fa-at>> Email~193",1,disable_input,,,,,,,,,,,,,
+1911,D,Summary Info Edit - Point of contact and insured email exists,,,,,,What information would you like to **edit**?,button,"<<far fa-arrow-alt-circle-left>> Go back~181|
+<<far fa-user-headset>> Agent's name~199|
+<<far fa-user>> Policyholder's name~194|
+<<far fa-calendar>> Theft date~195|
+<<far fa-map>> Policy address~197|
+<<far fa-map-marked>> Theft address~198|
+<<far fa-house-damage>> Building damage~196|
+<<far fa-file-alt>> Loss summary~1991|
+<<far fa-phone>> Contact number~192|
+<<far fa-at>> Email~193|
+<<far fa-envelope>> Insured's email~1992",1,disable_input,,,,,,,,,,,,,
+192,A,AssignVariable - EDIT_MODE | PHONE_NUMBER,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~161|error~99990,,,EDIT_MODE,,,
+193,A,AssignVariable - EDIT_MODE | EMAIL,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~17|error~99990,,,EDIT_MODE,,,
+194,A,AssignVariable - EDIT_MODE | NAME,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1331|error~99990,,,EDIT_MODE,,,
+195,A,AssignVariable - EDIT_MODE | DOL,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1951|error~99990,,,EDIT_MODE,,,
+1951,A,VarCheck - DOL vs. USER_DOL,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""USER_DOL""}",valid,true~22|false~134|error~99990,,,USER_DOL,,,
+196,A,AssignVariable - EDIT_MODE | BUILDINGDAMAGE,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1551|error~99990,,,EDIT_MODE,,,
+197,A,AssignVariable - EDIT_MODE | POLICY_ADDRESS,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1163|error~99990,,,EDIT_MODE,,,
+198,A,AssignVariable - EDIT_MODE | THEFT_ADDRESS,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~143|error~99990,,,EDIT_MODE,,,
+199,A,AssignVariable - EDIT_MODE | AGENT_FULLNAME,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~122|error~99990,,,EDIT_MODE,,,
+1991,A,AssignVariable - EDIT_MODE | LOSS_SUMMARY,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1561|error~99990,,,EDIT_MODE,,,
+1992,A,AssignVariable - EDIT_MODE | INSURED_EMAIL,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~1732|error~99990,,,EDIT_MODE,,,
+2,A,GenerateAccessToken,,,,,,,,,,,GenerateAccessToken,OAuth2,success,,,success,true~175|false~99990|error~99990,,,"ACCESS_TOKEN,GENERATE_ACCESS_TOKEN_CORRELATION_ID",,,
+211,D,TESTING - Display Names (Orphaned),,,,,,"PYPESTREAM TESTING
+
+Global Var Names Are:
+
+FIRSTNAME: {FIRSTNAME}
+LASTNAME: {LASTNAME}
+AGENT_FIRSTNAME: {AGENT_FIRSTNAME}
+AGENT_LASTNAME: {AGENT_LASTNAME}
+Is Training: {IS_TRAINING_BOOLEAN}",button,Go to Clean Names~175,1,disable_input,,,,,,,,,,,,,
+212,D,TESTING - Display Names (Orphaned),,,,,,"PYPESTREAM TESTING
+
+Global Var Names Are:
+
+FIRSTNAME: {FIRSTNAME}
+LASTNAME: {LASTNAME}
+AGENT_FIRSTNAME: {AGENT_FIRSTNAME}
+AGENT_LASTNAME: {AGENT_LASTNAME}
+Is Training: {IS_TRAINING_BOOLEAN}",button,Create Claim~20,1,disable_input,,,,,,,,,,,,,
+20,A,CreateClaim ✓,,,,,,,,,,,CreateClaim,"Input --> All the variables we collected
+
+Output --> Claims number
+
+Additional notes are commented out in the action node",success,,,success,true~200|false~201|retry_claim~202|error~99990,,,"ACCESS_TOKEN,CHATID,FIRSTNAME,LASTNAME,AGENT_FULLNAME,OTHER_FILER,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_NUMBER,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,USER_DOL,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,CLAIM_NUMBER,POLICY_NUMBER,CREATE_CLAIM_CORRELATION_ID,LOSS_SUMMARY,CREATE_CLAIM_ERROR_MESSAGE,LASTURL,IS_TRAINING_BOOLEAN,REQUEST_BODY,CREATE_CLAIM_SUCCESS",,,
+200,A,VarCheck - HIDDEN_FLOW,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""HIDDEN_FLOW""}",valid,true~21|false~2000|error~99990,,,"HIDDEN_FLOW,LASTURL",,,
+2000,A,"PostToBQTable → claim_submitted
+
+✓",,,,,,,,,,,PostToBQTable,"Posts to BQ Table if a claim has been submitted. Once a claim has been submitted, the user cannot use the same link to file another claim.",success,,"{
+  ""event"": ""claim_submitted""
+}",success,true~2001|error~2001,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,ORIGINATOR,CLAIM_FILER",,,
+2001,A,"PostToBQTableClaimNumber
+
+✓",,,,,,,,,,,PostToBQTableClaimNumber,,success,,,success,true~21|error~21,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,CLAIM_NUMBER,IS_TRAINING_BOOLEAN,ORIGINATOR,CLAIM_FILER",,,
+201,A,SlackLoggerClaimCreation,,,,,,,,,,,SlackLoggerClaimCreation,,success,,,success,true~99990|error~99990,,,"CHATID,CREATE_CLAIM_ERROR_MESSAGE",,,
+202,D,CreateClaimPhase Error Message → 502 or 504 response,,,,,,"Sorry, I encountered an issue while trying to file your claim. Please try again.",button,<<far fa-check>> File my claim~203,1,disable_input,,,,,,,,,,,,,
+203,A,CreateClaim → User is trying 2nd time (Retry),,,,,,,,,,,CreateClaim,"True --> Claim has been created and all is good
+
+retry_claim --> This means that there was a 502 or 504 response. In this case, we want to ask the user to try again. If they still hit the 502 or 504 we'll take them to the standard error message node (see #99990)",success,,,success,true~200|false~201|retry_claim~99990|error~201,,,"ACCESS_TOKEN,CHATID,FIRSTNAME,LASTNAME,AGENT_FULLNAME,OTHER_FILER,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_NUMBER,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,USER_DOL,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,CLAIM_NUMBER,POLICY_NUMBER,CREATE_CLAIM_CORRELATION_ID,LOSS_SUMMARY,CREATE_CLAIM_ERROR_MESSAGE,LASTURL,IS_TRAINING_BOOLEAN,REQUEST_BODY,CREATE_CLAIM_SUCCESS",,,
+21,D,Claim - Creation + Auto Assign,,,,,210,"Thank you, I have successfully filed your claim as **{CLAIM_NUMBER}**.
+
+One of our claims professionals will reach out to you shortly with next steps.",,,,,,,,,,,,,,,,,
+210,A,VariableReset - LOSS_SUMMARY,,,,,,,,,,,VariableReset,,success,,,success,true~21000|error~99990,,,LOSS_SUMMARY,,,
+21000,A,AssignVar - SurveyQual,,,,,,,,,,,AssignVariable,,success,,"{
+    ""set"": {
+            ""SURVEY_QUAL"": ""Y""
+    }
+}",success,true~2100|error~99990,,,SURVEY_QUAL,,,
+2100,A,"PostEventToBQ - Phase 2 End (No Phase 3)
+
+✓",,,,,,,,,,,PostEventToBQ,Phase 2 End,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 2 End"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~666|hidden_flow~666|error~99990,,,SESSION_ID,,,
+2101,A,MultiVarCheck - QUANTUM_POLICY& INSURED,,,,,,,,,,,MultiVarCheck,,valid,,"{""global_vars"": [""QUANTUM_POLICY"",""INSURED ""]}",valid,all~4|some~666|none~666|error~99990,,,"QUANTUM_POLICY,INSURED",,,
+22,D,Custom future-only datepicker (single date),,,,1,221,,webview,Please select a date~https://preview.pypestream.com/cx/travelers_datepicker_4/index.html?env={ENVIRONMENT}&picker=datepicker&minDate={FIRST_DAY_TWO_YEARS_AGO}&maxDate={CURRENT_DATE},1,,,,,,,,,,,,,,
+221,A,GetEventsDate,,,,,,,,,,,GetEventsDate,"Action node to retrieve JS events specificially for the custom datepicker hosted here: https://preview.pypestream.com/cx/gf_datepicker/index.html
+
+Input:
+- {""type"":""single""} for single-date version of the datepicker webview
+- {""type"":""range""} for range version of the datepicker webview",success,,"{""type"":""single""}",success,true~2211|false~2211|error~99990,,,"DOL_DISPLAY,DOL",,,
+2211,A,ValidateDate - DOL,,,,,,,,,,,ValidateDate,"'- Validates the date format
+- Optionally checks if the date is the past / future / not past / not future /present / not present.
+- Optionally outputs to a specified date format
+
+Required input:
+- global_var_name: name of input global variable will be validated.
+
+Optional input:
+- output_format: use it if we want to change date format
+- timezone: use timezone if we want to check today in a specified timezone, list of timezone names: https://gist.github.com/heyalexej/8bf688fd67d7199be4a1682b3eec7568
+- compare_with_today: one of these values: past, future, present, not_past, not_future, not_present
+- compare_with_date: supports: before_date, after_date, not_before_date, not_after_date, not_date. We can use one / all of them at once.
+
+Output:
+- success = true --> valid date format with corresponding to compare_with_today value if available.
+- success = false --> invalid date format
+- success = not_past_false, future_false,... correspond to compare_with_today (not_past, future,...) value if availble.
+- success = compare_with_date_false if the compare with dates false
+- success = error --> catch all exception error",valid,,"{
+  ""global_var_name"": ""DOL"",
+  ""compare_with_today"": ""not_future"",
+  ""output_format"": ""%m-%d-%Y"",
+  ""output_reformatted_date"": ""DOL""
+}",valid,true~223|false~222|not_future_false~222|error~99990,,,"DOL,USER_DOL",,,
+222,D,ValidateDate - False (Date in future),,,,,,"I'm sorry, it looks like you may have chosen a date in the **future**. Please let us know when the items were stolen.",button,<<fal fa-calendar>> Select date~22,1,disable_input,,,,,,,,,,,,,
+223,D,Confirm date,,,,,,You selected **{USER_DOL}**. Is this date correct?,button,"<<far fa-check>> Yes, continue~224|
+<<fal fa-edit>> Edit incident date~22",1,disable_input,,,,,,,,,,,,,
+224,A,PolicySnapshot - EDIT_MODE,,,,,,,,,,,PolicySnapshot,,success,,,success,true~2252|policy_not_found~225|false~225|error~225,,,"CHATID,POLICY_NUMBER,POLICY_DEDUCTIBLE,DOL,POLICY_TOKEN,POLICY_SNAPSHOT_CORRELATION_ID,POLICY_PERIOD_START_DATE,POLICY_PERIOD_END_DATE,POLICY_ADDRESS,POLICYADDR1,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDRSTATE,DWELLING_LIMIT,OTHER_STRUCTURE_LIMIT,PERSONAL_PROPERTY_LIMIT,LOSS_OF_USE_LIMIT,POLICY_SNAPSHOT_ERROR_CORRELATION_ID,QUANTUM_POLICY,POLICY_SUMMARY_STRING,PRODUCER_CODE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,PRODUCER_CODE,POLICY_LIMIT",,,
+225,A,SlackLoggerPolicy - EDIT_MODE,,,,,,,,,,,SlackLoggerPolicy,Action node that will send proactive error notifications to a Slack channel if PolicySnapshot action node breaks,success,,,success,true~2250|error~99990,,,"CHATID,POLICY_SNAPSHOT_ERROR_CORRELATION_ID",,,
+2250,A,VarCheck - OUTSIDE_POLICY,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""OUTSIDE_POLICY""}",valid,true~18|false~2251|error~2251,,,OUTSIDE_POLICY,,,
+2251,A,AssignVariable - OUTSIDE_POLICY,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""OUTSIDE_POLICY"": ""true""
+  }
+}",success,true~226|error~99990,,,OUTSIDE_POLICY,,,
+2252,A,VariableReset - OUTSIDE_POLICY,,,,,,,,,,,VariableReset,,success,,,success,true~2253|error~99990,,,OUTSIDE_POLICY,,,
+2253,A,VarCheck - COVERAGE_DISPLAYED,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""COVERAGE_DISPLAYED""}",valid,true~18|false~2254|error~2254,,,COVERAGE_DISPLAYED,,,
+2254,A,AssignVariable - COVERAGE_DISPLAYED,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""COVERAGE_DISPLAYED"": ""true""
+  }
+}",success,true~227|error~99990,,,COVERAGE_DISPLAYED,,,
+226,D,PolicySnapshot - Policy info no longer applies,,,,,,*Please note that the previously displayed coverage information may no longer apply due to the newly selected theft date.*,button,"<<far fa-check>> Continue~2261|
+<<far fa-ban>> No, end chat~2260",1,disable_input,,,,,,,,,,,,,
+2260,A,"PostEventToBQ → Forced Out (Policy info no longer applies)
+
+✓",,,,,,,,,,,PostEventToBQ,User was notified the policy coverage info no longer applies (due to the DOL). Now they wanna leave :( - Lucas (9/20/23 @ 8:28pm),success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Forced Out"",
+        ""forced_out_reason"": ""Policy Info no longer applies"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~666|error~99990,,,SESSION_ID,,,
+2261,A,VariableReset - COVERAGE_DISPLAYED,,,,,,,,,,,VariableReset,,success,,,success,true~18|error~99990,,,COVERAGE_DISPLAYED,,,
+227,D,Coverage Snapshot,,,,,228,Here's a coverage snapshot for **{POLICY_ADDRESS}**:,,,,,,,,,,,,,,,,,
+228,D,Coverage Snapshot - Part 2,,,,,2281,{POLICY_SUMMARY_STRING},,,,,,,,,,,,,,,,,
+2281,D,Legal disclaimer webview,,,,,229,,webview,~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/LegalDisclaimerV4.html?height=120,,inline,,,,,,,,,,,,,
+229,D,Coverage Snapshot - Part 3,,,,,,Would you like to proceed with **filing a claim**?,button,"<<far fa-file-plus>> Yes, continue~18|
+<<far fa-ban>> No, end chat~2291",1,disable_input,,,,,,,,,,,,,
+2291,A,"PostEventToBQ → Forced Out (Updated Policy Info Decline)
+
+✓",,,,,,,,,,,PostEventToBQ,User was notified the policy coverage info no longer applies (due to the DOL). Now they wanna leave :( - Lucas (9/20/23 @ 8:28pm),success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Forced Out"",
+        ""forced_out_reason"": ""Updated Policy Info Decline"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~666|error~99990,,,SESSION_ID,,,
+4,A,"PostEventToBQ - phase_3_start
+
+✓",,,,,,,,,,,PostEventToBQ,Phase 3 Start,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 3 Start"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~40|error~99990,,,SESSION_ID,,,
+40,D,Phase 3 Start → Ask Police Report,,,,,,Did you file a **police report**?,button,"<<far fa-check>> Yes~41|
+<<far fa-ban>> No~410",1,disable_input,,,,,,,,,,,,,
+41,A,AssignVariable - Yes Police Report,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""POLICE_REPORT"": ""Yes""
+  }
+}",success,true~411|error~99990,,,POLICE_REPORT,,,
+410,A,AssignVariable - No Police Report,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+        ""set"": {
+                ""POLICE_REPORT"": ""No"",
+                ""CASE_NUMBER"": ""N/A"",
+                ""POLICE_DEPARTMENT"": ""N/A""
+        }
+}",success,true~4101|error~99990,,,"POLICE_REPORT,CASE_NUMBER,POLICE_DEPARTMENT",,,
+4101,D,Inform user police report required to file a claim,,,,,,Please note that you can proceed with filing a claim but to finalize your claim you will need to contact a police department and receive a **valid case number**.,button,"<<far fa-check>> Continue~4102|
+<<far fa-arrow-alt-circle-left>> Go back~40",1,disable_input,,,,,,,,,,,,,
+4102,A,VarCheck - POLICE_REPORT_EDIT_MODE (Police report → No),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICE_REPORT_EDIT_MODE""}",valid,true~418|false~415|error~99990,,,POLICE_REPORT_EDIT_MODE,,,
+41021,A,CheckPoliceReport - Checks if answer is no or yes,,,,,,,,,,,CheckPoliceReport,"If the user selects ""No"" to the police report question, we're going to take them back to the summary node. If they select ""Yes"", we're going to ask them the additional questions (ex. police department).",success,,,success,yes~411|no~415|error~99990,,,POLICE_REPORT,,,
+4103,A,VarCheck - POLICE_REPORT_EDIT_MODE (Police report → No),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""POLICE_REPORT_EDIT_MODE""}",valid,true~418|false~411|error~99990,,,POLICE_REPORT_EDIT_MODE,,,
+411,D,Ask for Case Number → CASE_NUMBER,,,,1,4111,Please enter the **case number** below:,button,"<<far fa-question-circle>> I don't know the case number~4111|
+<<far fa-arrow-alt-circle-left>> Go back~4111",1,,,,,,,,,,,CASE_NUMBER,,,
+4111,A,SelectionDestinations → CASE_NUMBER,,,,,,,,,,,SelectionDestinations,This action node will route the user based on either their button selection or free text entry. This script will route the user's selection to the proper destination.,next_node,,"{
+  ""global_var"": ""CASE_NUMBER"",
+  ""match"": {
+    ""I don't know the case number"": ""41111"",
+    ""Go back"": ""4""
+  }
+}",next_node,41111~41111|4~4|no_match~412|error~99990,,,CASE_NUMBER,,,
+41111,A,AssignVariable - CASE_NUMBER (Unknown),,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""CASE_NUMBER"": ""N/A""
+  }
+}",success,true~4112|error~99990,,,CASE_NUMBER,,,
+4112,D,Inform user case number is required,,,,,,"Please note that you can proceed with filing a claim, but to finalize your claim you will need a **valid case number** from a police department.",button,"<<far fa-check>> Continue~4122|
+<<far fa-arrow-alt-circle-left>> Go back~411",1,disable_input,,,,,,,,,,,,,
+412,A,SearchTextForRegex - CASE_NUMBER,,,,,,,,,,,SearchTextForRegEx,,found_regex,,"{
+        ""input_text"": ""CASE_NUMBER"",
+        ""output_var"": ""CASE_NUMBER"",
+        ""regex"": ""^[a-zA-Z0-9:.,;$\\-()\\s]*$""
+}",found_regex,true~4122|false~4121|error~99990,,,CASE_NUMBER,,,
+4121,D,SearchTextForRegex - Invalid Case Number,,,,,,"I'm sorry, but it seems like the case number contains **invalid characters**. Would you like to try again?",button,<<far fa-undo>> Try again~411,1,disable_input,,,,,,,,,,,,,
+4122,A,VarCheck - EDIT_MODE (Case number),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~418|false~413|error~99990,,,EDIT_MODE,,,
+413,D,Ask for Police Department → POLICE_DEPARTMENT,,,,1,4131,What is the name of the **police department** where the report was filed?,button,<<far fa-question-circle>> I don't know the police department~4131|<<far fa-arrow-alt-circle-left>> Go back~4131,1,,,,,,,,,,,POLICE_DEPARTMENT,,,
+4131,A,SelectionDestinations → POLICE_DEPARTMENT,,,,,,,,,,,SelectionDestinations,This action node will route the user based on either their button selection or free text entry. This script will route the user's selection to the proper destination.,next_node,,"{
+  ""global_var"": ""POLICE_DEPARTMENT"",
+  ""match"": {
+    ""I don't know the police department"": ""41311"",
+    ""Go back"": ""411""
+  }
+}",next_node,41311~41311|411~411|no_match~414|error~99990,,,POLICE_DEPARTMENT,,,
+41311,A,AssignVariable - POLICE_DEPARTMENT (N/A),,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""POLICE_DEPARTMENT"": ""N/A""
+  }
+}",success,true~4132|error~99990,,,POLICE_DEPARTMENT,,,
+4132,D,Inform user police department is required,,,,,,Please note that you will need to contact your local police department and have a **valid case number** to proceed with finalizing a claim.,button,"<<far fa-check>> Continue~4142|
+<<far fa-arrow-alt-circle-left>> Go back~413",1,disable_input,,,,,,,,,,,,,
+414,A,SearchTextForRegex - POLICE_DEPARTMENT,,,,,,,,,,,SearchTextForRegEx,"Allow for commas, letters, and periods.",found_regex,,"{
+        ""input_text"": ""POLICE_DEPARTMENT"",
+        ""output_var"": ""POLICE_DEPARTMENT"",
+        ""regex"": ""^[a-zA-Z0-9:.,;$\\-()\\s]*$""
+}",found_regex,true~4142|false~4141|error~99990,,,POLICE_DEPARTMENT,,,
+4141,D,SearchTextForRegex - Invalid Police Department,,,,,,"I'm sorry, but the name of the police department cannot contain any numbers or special characters.
+
+*(ex. Oakland Police Department)*",button,<<far fa-undo>> Try again~413,1,disable_input,,,,,,,,,,,,,
+4142,A,VarCheck - EDIT_MODE (Police department),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~418|false~4143|error~99990,,,EDIT_MODE,,,
+4143,A,VarCheck - POLICE_REPORT_EDIT_MODE (Police report → No),,,,,,,,,,,VarCheck,"If the user selects ""No"" to the police report question, we're going to take them back to the summary node. If they select ""Yes"", we're going to ask them the additional questions (ex. police department).",valid,,"{""global_var_name"":""POLICE_REPORT_EDIT_MODE""}",valid,true~418|false~415|error~99990,,,POLICE_REPORT_EDIT_MODE,,,
+415,A,ListPickerGenerator → PROPERTY_OWNER,,,,,,,,,,,ListPickerGenerator,"Creates static multi-select LP for the ""PROPERTY_OWNER"" global var","list_picker,success",,"{
+        ""items"": ""Me or my immediate family who lives with me|Someone other than family who lives with me|Someone who doesn't live with me""
+}",success,true~4151|error~99990,,,,,,
+4151,D,Ask for Owner → PROPERTY_OWNER,,,,1,41511,**Who owned** the stolen property?,selection,{415*list_picker},1,"multiple_choice,disable_input",,,,,,,,,,PROPERTY_OWNER,,,
+41511,A,GetGeneratorSelection → PROPERTY_OWNER,,,,,,,,,,,GetGeneratorSelection,Retrieves the value from the LPGenerator,success,,"{""global_var_name"":""PROPERTY_OWNER""}",success,true~4152|error~99990,,,PROPERTY_OWNER,,,
+4150,A,VariableReset - CASE_NUMBER + POLICE_DEPARTMENT,,,,,,,,,,,VariableReset,"This will clear all global variables if the user filled out CASE_NUMBER and POLICE_REPORT. If a user selected ""Yes"" to police report originally but then goes back and selects ""no"" we want to null out those global variables.",success,,,success,true~4|error~99990,,,"POLICE_DEPARTMENT,CASE_NUMBER,POLICE_REPORT",,,
+4152,A,VarCheck - EDIT_MODE (Property Owner),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~418|false~416|error~99990,,,EDIT_MODE,,,
+416,D,Ask for Business Purpose → BUSINESS_PURPOSE,,,,,,Were any of the stolen items used for a **business purpose**?,button,"<<far fa-check>> Yes~4161|
+<<far fa-ban>> No~4161",1,disable_input,,,,,,,,,,BUSINESS_PURPOSE,,,
+4161,A,GetValue - BUSINESS_PURPOSE,,,,,,,,,,,GetValue,,success,,"{""global_vars"":""BUSINESS_PURPOSE""}",success,true~4162|false~99990,,,BUSINESS_PURPOSE,,,
+4162,A,VarCheck - EDIT_MODE (Business Purpose),,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~418|false~418|error~99990,,,EDIT_MODE,,,
+418,A,StripFontAwesome,,,,,,,,,,,StripFontAwesome,"Action node that removes FA from button selections. We need this action node for the ""CompileSummaryMessage"" action node to display properly.
+
+Also sets global variables to ""Unknown"" if the global variable is coming to us as ""None"". Some of the global variables may come in as ""None"" (ex. police department) if others aren't present (ex. ""police report""). To elucidate, there would be no police department global variable if the user said ""no"" to a police report.",success,,,success,true~4181|false~99990|error~99990,,,"POLICE_REPORT,CASE_NUMBER,POLICE_DEPARTMENT,PROPERTY_OWNER,BUSINESS_PURPOSE",,,
+4181,A,CompileSummaryMessage - Phase 3,,,,,,,,,,,CompileSummaryMessage,"Directions:
+
+1) We will be compiling a dynamic string and returning it as the global variable in param input ""output_message"".
+
+2) Look in the parameter input. For each element in ""conditional_items"":
+- If the global variable in ""var"" exists (is not None), add the string in ""label"" to our final output string.
+
+3) Arrange all labels according to the order provided in the parameter input.
+
+4) All elements inside {} should be the global var value.
+
+5) At the end, strip away all leading and trailing spaces and line breaks.
+
+6) Return the final compiled string as the global variable in param input ""output_message"".",success,,"{
+        ""output_message"": ""PHASE_3_SUMMARY"",
+        ""conditional_items"": [{
+                        ""var"": ""POLICE_REPORT"",
+                        ""label"": ""Police Report: **{POLICE_REPORT}**
+"",
+                        ""order"": ""1""
+                },
+                {
+                        ""var"": ""CASE_NUMBER"",
+                        ""label"": ""Case Number: **{CASE_NUMBER}**
+"",
+                        ""order"": ""2""
+                },
+                {
+                        ""var"": ""POLICE_DEPARTMENT"",
+                        ""label"": ""Police Department: **{POLICE_DEPARTMENT}**
+"",
+                        ""order"": ""3""
+                },
+                {
+                        ""var"": ""PROPERTY_OWNER"",
+                        ""label"": ""Property Owner: **{PROPERTY_OWNER}**
+"",
+                        ""order"": ""4""
+                },
+                {
+                        ""var"": ""BUSINESS_PURPOSE"",
+                        ""label"": ""Business Purpose: **{BUSINESS_PURPOSE}**"",
+                        ""order"": ""5""
+                }
+        ]
+}",success,true~41811|false~99990,,,"POLICE_REPORT,CASE_NUMBER,POLICE_DEPARTMENT,PROPERTY_OWNER,BUSINESS_PURPOSE,PHASE_3_SUMMARY",,,
+41811,A,VariableReset - EDIT_MODE,,,,,,,,,,,VariableReset,,success,,,success,true~4182|false~99990,,,"EDIT_MODE,POLICE_REPORT_EDIT_MODE",,,
+4182,D,Phase 3 Summary,,,,,,"Can you please verify the information below is correct?
+
+{PHASE_3_SUMMARY}",button,"<<far fa-check>> Yes, file my claim~42|
+<<far fa-times>> I need to make an edit~421",1,disable_input,,,,,,,,,,,,,
+42,A,GenerateAccessToken,,,,,,,,,,,GenerateAccessToken,"Access token that will be used in the ""CreateClaimPhase3"" action node",success,,,success,true~43|false~99990|error~99990,,,"ACCESS_TOKEN,GENERATE_ACCESS_TOKEN_CORRELATION_ID",,,
+420,A,VarCheck - POLICE_REPORT,,,,,,,,,,,VarCheck,We want to show the user different edit options depending on if they have a police report or not.,valid,,"{""global_var_name"":""POLICE_REPORT""}",valid,true~421|false~421|error~99990,,,POLICE_REPORT,,,
+421,D,Phase 3 Summary - Edit Info,,,,,,What information would you like to **edit**?,button,"<<far fa-arrow-alt-circle-left>> Go back~4181|
+<<far fa-file-alt>> Police report~424|
+<<far fa-hashtag>> Case number~425|
+<<far fa-building>> Police department~426|
+<<far fa-user-alt>> Property owner~427|
+<<far fa-briefcase>> Business purpose~428",1,disable_input,,,,,,,,,,,,,
+423,D,Phase 3 Summary (No Police Report) - Edit Info,,,,,,What information would you like to **edit**?,button,"<<far fa-arrow-alt-circle-left>> Go back~418|
+<<far fa-user-headset>> Police report~424|
+<<far fa-map>> Property owner~427|
+<<far fa-map-marked>> Business purpose~428",1,disable_input,,,,,,,,,,,,,
+424,A,AssignVariable - POLICE_REPORT_EDIT_MODE  | POLICE_REPORT,,,,,,,,,,,AssignVariable,"For this AssignVariable, we're setting the global variable ""POLICE_REPORT_EDIT_MODE "".
+
+We need to make a custom global variable because if they answer ""Yes"" to the police report question, we need to follow-up with other questions. If we just put an ""EDIT_MODE"", the user would return to the summary and they wouldn't be asked the follow-up questions. - Lucas (8/9)",success,,"{
+  ""set"": {
+    ""POLICE_REPORT_EDIT_MODE"": ""true""
+  }
+}",success,true~40|error~99990,,,POLICE_REPORT_EDIT_MODE,,,
+425,A,AssignVariable - EDIT_MODE | CASE_NUMBER,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~411|error~99990,,,EDIT_MODE,,,
+426,A,AssignVariable - EDIT_MODE | POLICE_DEPARTMENT,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~413|error~99990,,,EDIT_MODE,,,
+427,A,AssignVariable - EDIT_MODE | PROPERTY_OWNER,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~415|error~99990,,,EDIT_MODE,,,
+428,A,AssignVariable - EDIT_MODE | BUSINESS_PURPOSE,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~416|error~99990,,,EDIT_MODE,,,
+43,A,CheckBusinessRules,,,,,,,,,,,CheckBusinessRules,"This action node checks the user's selections against Travelers' business rules. For the favorable path (true~):
+
+1. Police report - Yes
+2. Police Department and Case Number must be provided
+3. Property owner must be ""Me or Family who lives with me""
+4. Business purpose - No",success,,,success,true~431|false~4310|error~99990,,,"POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED",,,
+431,A,AssignVariable - INVESTIGATION_PASSED,,,,,,,,,,,AssignVariable,"If the user passes all the investigative questions, we'll go to this AssignVar. The ""true"" value in ""INVESTIGATION_PASSED"" will be used in the GenerateVeriskLink
+
+
+Easter Egg --> To whoever finds this, you will be rewarded 20 Bonusly points by Lucas (6/30)",success,,"{
+  ""set"": {
+    ""INVESTIGATION_PASSED"": ""True""
+  }
+}",success,true~4310|error~99990,,,INVESTIGATION_PASSED,,,
+4310,A,AssignBusinessVariable,,,,,,,,,,,AssignBusinessVariable,"This action node will take in the global variable ""INVESTIGATION_PASSED"" and output the global variable ""INVESTIGATION_PASSED_VARIABLE""
+
+""INVESTIGATION_PASSED_VARIABLE"" will be either ""Yes"" or ""No"". We're setting this global variable so that we can feed it to BQ for reporting.",success,,,success,true~4311|error~99990,,,INVESTIGATION_PASSED,,,
+4311,A,"PostEventToBQ - business_rule_kickout
+
+✓",,,,,,,,,,,PostEventToBQ,Investigation Passed,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Investigative Questions Answered"",
+        ""favorable"": ""{INVESTIGATION_PASSED}"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~4312|error~99990,,,"INVESTIGATION_PASSED,SESSION_ID",,,
+4312,A,Clean Names,,,,,,,,,,,CleanNames,,success,,,success,true~432|error~99990,,,"FIRSTNAME,LASTNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+432,A,CreateClaimPhase3 ✓,,,,,,,,,,,CreateClaimPhase3,"True --> Claim has been created and user proceeds to itemization
+
+retry_claim --> This means that there was a 502 or 504 response. In this case, we want to ask the user to try again. If they still hit the 502 or 504 we'll take them to the standard error message node (see #99990)",success,,,success,true~433|retry_claim~4321|false~99990|error~99990,,,"ACCESS_TOKEN,CHATID,FIRSTNAME,LASTNAME,AGENT_FULLNAME,OTHER_FILER,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_NUMBER,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,USER_DOL,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,CLAIM_NUMBER,POLICY_NUMBER,CREATE_CLAIM_CORRELATION_ID,LOSS_SUMMARY,CREATE_CLAIM_ERROR_MESSAGE,LASTURL,IS_TRAINING_BOOLEAN,REQUEST_BODY,POLICE_REPORT,CASE_NUMBER,POLICE_DEPARTMENT,PROPERTY_OWNER,BUSINESS_PURPOSE,CREATE_CLAIM_SUCCESS,INVESTIGATION_PASSED,REMARKS_NOTE",,,
+4321,D,CreateClaimPhase3 Error Message → 502 or 504 response,,,,,,"Sorry, I encountered a technical error while trying to create your claim. Please try again.",button,<<far fa-check>> File my claim~4322,1,disable_input,,,,,,,,,,,,,
+4322,A,CreateClaimPhase3 → User is retrying,,,,,,,,,,,CreateClaimPhase3,,success,,,success,true~433|retry_claim~99990|false~99990|error~99990,,,"ACCESS_TOKEN,CHATID,FIRSTNAME,LASTNAME,AGENT_FULLNAME,OTHER_FILER,AGENT_FIRSTNAME,AGENT_LASTNAME,PHONE_NUMBER,PHONE_FORMATTED,EMAIL,INSURED_EMAIL,POLICYADDR_PRETTY,USER_DOL,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRSTATE,POLICYADDRPOSTAL,DOL,THEFT_ONPREMISE,THEFTADDR_PRETTY,BUILDINGDAMAGE,BUILDINGDAMAGE_ROOMS,SUMMARY_STRING,THEFTADDR1,THEFTADDR2,THEFTADDRCITY,THEFTADDRSTATE,THEFTADDRPOSTAL,CLAIM_NUMBER,POLICY_NUMBER,CREATE_CLAIM_CORRELATION_ID,LOSS_SUMMARY,CREATE_CLAIM_ERROR_MESSAGE,LASTURL,IS_TRAINING_BOOLEAN,REQUEST_BODY,POLICE_REPORT,CASE_NUMBER,POLICE_DEPARTMENT,PROPERTY_OWNER,BUSINESS_PURPOSE,CREATE_CLAIM_SUCCESS,INVESTIGATION_PASSED,REMARKS_NOTE",,,
+433,D,Display claim number,,,,,4331,"Thank you {FIRSTNAME}, I have successfully filed your claim as **{CLAIM_NUMBER}**.",,,,,,,,,,,,,,,,,
+4331,A,"PostToBQTableClaimNumber
+
+✓",,,,,,,,,,,PostToBQTableClaimNumber,,success,,,success,true~434|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,CLAIM_NUMBER,IS_TRAINING_BOOLEAN,ORIGINATOR,CLAIM_FILER",,,
+434,A,"PostToBQTable → claim_submitted
+
+✓",,,,,,,,,,,PostToBQTable,"Posts to BQ Table if a claim has been submitted. Once a claim has been submitted, the user cannot use the same link to file another claim.",success,,"{
+  ""event"": ""claim_submitted""
+}",success,true~435|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,ORIGINATOR,CLAIM_FILER",,,
+435,A,GenerateVeriskToken,,,,,,,,,,,GenerateVeriskToken,Generates access token for the GenerateVeriskLink action node,success,,,success,true~436|error~99990,,,VERISK_ACCESS_TOKEN,,,
+436,A,"GenerateVeriskLink
+
+[/create-task endpoint]",,,,,,,,,,,GenerateVeriskLink,"If the user answers the investigative questions in a specific way, we'll generate a Verisk link",success,,,success,true~437|false~437|error~437,,,"VERISK_LINK,VERISK_ACCESS_TOKEN,CLAIM_NUMBER,POLICY_NUMBER,PHONE_FORMATTED,FIRSTNAME,LASTNAME,POLICYADDRPOSTAL,POLICYADDRSTATE,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRPOSTAL,BUILDINGDAMAGE,PYPESTREAM_TESTING,PRODUCER_CODE,INVESTIGATION_PASSED,POLICY_DEDUCTIBLE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,POLICY_LIMIT,QUANTUM_POLICY,SNAPSHOT_ID",,,
+4351,A,"GenerateVeriskTokenSeriesC
+
+[Series C Testing]",,,,,,,,,,,GenerateVeriskTokenSeriesC,Generates access token for the GenerateVeriskLink action node,success,,,success,true~436|error~99990,,,VERISK_ACCESS_TOKEN,,,
+4361,A,"GenerateVeriskLinkSeriesC
+
+[Series C Testing]",,,,,,,,,,,GenerateVeriskLinkSeriesC,"If the user answers the investigative questions in a specific way, we'll generate a Verisk link",success,,,success,true~437|false~437|error~437,,,"VERISK_LINK,VERISK_ACCESS_TOKEN,CLAIM_NUMBER,POLICY_NUMBER,PHONE_FORMATTED,FIRSTNAME,LASTNAME,POLICYADDRPOSTAL,POLICYADDRSTATE,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRPOSTAL,BUILDINGDAMAGE,PYPESTREAM_TESTING,PRODUCER_CODE,INVESTIGATION_PASSED,POLICY_DEDUCTIBLE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,POLICY_LIMIT,QUANTUM_POLICY",,,
+437,A,"AssignVariable - SAVE_NODE
+
+[Saves the user's spot]",,,,,,,,,,,AssignVariable,"Global variable to save the user's spot in the solution. There's a VarCheck in the ECH for this global variable. 
+
+This global variable is used as a ""flag"" to mark the user's last location and bring them back to the webview if they close the chat + revisit the link.",success,,"{
+  ""set"": {
+    ""SAVE_NODE"": ""True""
+  }
+}",success,true~4371|error~99990,,,SAVE_NODE,,,
+4371,A,PostToItemizationTable,,,,,,,,,,,PostToItemizationTable,Posts the SAVE_NODE checkpoint to BQ,success,,,success,true~44|error~99990,,,"SESSION_ID,POLICY_NUMBER,SAVE_NODE,VERISK_LINK,FIRSTNAME,LASTNAME,SAVE_NODE,EMAIL,CLAIM_NUMBER,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDR1,POLICYADDR2,STOLEN_ITEMS_LIST,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,STOLEN_ITEMS_SUMMARY,STOLEN_ITEM",,,
+44,D,Instruct user on what's next,,,,,,"In the next steps you will provide details about your stolen items.
+
+Please complete this form to the best of your ability. You will have an opportunity to upload pictures or documents to support your claim - the details you provide will help determine the value of your stolen items.
+
+If you need to leave and return to the claims experience, your progress will be saved.",button,<<fal fa-arrow-alt-circle-right>>  Continue~440,1,disable_input,,,,,,,,,,,,,
+440,D,Acknowledgment language before fraud message,,,,,4401,"Before we start, please acknowledge the below:",,,,,,,,,,,,,,,,,
+4401,A,UserStateRouting → Based on POLICY_STATE,,,,,,,,,,,UserStateRouting,"We need to display fraud language to the user before they go to the form.
+
+Travelers has fraud language that's unique per state (not all states but a lot of them). This action node will read the user's state (from their policy address), and route them to the fraud language that's specific to their state.
+
+For example, if I'm from Cali I'll be routed to the California phony language disclaimer. The ""What's next"" will further elucidate this point. - 8/23/23 (Lucas)
+
+The decision nodes are gonna start at the 5s (starting with node #5 for Alabama)
+
+
+AL~5|
+AK~51|
+AZ~511|
+AR~5111|
+CA~5112|
+CO~5113|
+CT~5114|
+DE~5115|
+DC~5116|
+FL~5117|
+GA~5118|
+HI~5119|
+ID~512|
+IL~5121|
+IN~5122|
+IA~5123|
+KS~5124|
+KY~5125|
+LA~5126|
+ME~5127|
+MD~5128|
+MA~5129|
+MI~513|
+MN~5131|
+MS~5132|
+MO~5133|
+MT~5134|
+NE~5135|
+NV~5136|
+NH~5137|
+NJ~5138|
+NM~5139|
+NY~514|
+NC~5141|
+ND~5142|
+OH~5143|
+OK~5144|
+OR~5145|
+PA~5146|
+PR~5147|
+RI~5148|
+SC~5149|
+ND~515|
+TN~5151|
+TX~5152|
+UT~5153|
+VT~5154|
+VA~5155|
+WA~5156|
+WV~5157|
+WI~5158|
+WY~5159|
+error~99990",success,,,success,"AL~5|
+AK~51|
+AZ~511|
+AR~5111|
+CA~5112|
+CO~5113|
+CT~5114|
+DE~5115|
+DC~5116|
+FL~5117|
+GA~5118|
+HI~5119|
+ID~512|
+IL~5121|
+IN~5122|
+IA~5123|
+KS~5124|
+KY~5125|
+LA~5126|
+ME~5127|
+MD~5128|
+MA~5129|
+MI~513|
+MN~5131|
+MS~5132|
+MO~5133|
+MT~5134|
+NE~5135|
+NV~5136|
+NH~5137|
+NJ~5138|
+NM~5139|
+NY~514|
+NC~5141|
+ND~5142|
+OH~5143|
+OK~5144|
+OR~5145|
+PA~5146|
+PR~5147|
+RI~5148|
+SC~5149|
+ND~515|
+TN~5151|
+TX~5152|
+UT~5153|
+VT~5154|
+VA~5155|
+WA~5156|
+WV~5157|
+WI~5158|
+WY~5159|
+error~99990",,,POLICYADDRSTATE,,,
+4402,A,VarCheck → STOLEN_ITEMS_LIST_FINAL,,,,,,,,,,,VarCheck,"If the global var is None, that means it's the first time going through the itemization flow. If the global Var is NOT none, it means the user is coming back to the solution. As such, we shouldn't ping the PostEventToBQ action node if the user is simply returning.",valid,,"{""global_var_name"":""STOLEN_ITEMS_LIST_FINAL""}",valid,true~441|false~44021|error~99990,,,STOLEN_ITEMS_LIST_FINAL,,,
+44021,A,"PostEventToBQ → Webview Start
+
+✓",,,,,,,,,,,PostEventToBQ,Start of Itemization Webview,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Webview Start"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~441|error~99990,,,SESSION_ID,,,
+441,A,SetEnv - ENVIRONMENT,,,,,,,,,,,SetEnv,"Sets a global var called ENVIRONMENT equal to the runtime environment we're in. 
+
+I.E. ENVIRONMENT will normally be set to either ""sandbox"" or ""live"".",success,,,success,true~4411|error~99990,,,ENVIRONMENT,,,
+4411,A,VarCheck - STOLEN_ITEMS_LIST_FINAL,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""STOLEN_ITEMS_LIST_FINAL""}",valid,true~44111|false~4412|error~99990,,,STOLEN_ITEMS_LIST_FINAL,,,
+44111,A,"PostEventToBQ → Resume Webview
+
+✓",,,,,,,,,,,PostEventToBQ,Start of Itemization Webview,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Resume webview"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~444|error~99990,,,SESSION_ID,,,
+4412,A,VariableReset - SELECTED_ENCODED_B64_STOLEN_ITEM (Item that was being added),,,,,,,,,,,VariableReset,"We need to reset this variable, because when a user is editing an item (in the StolenItemsListpicker) we save it as ""SELECTED_ENCODED_B64_STOLEN_ITEM "" and route them back to the webview. 
+
+If the user edits an item and hits ""Add another item"" after, they'll be taken back to the webview with the SELECTED_ENCODED_B64_STOLEN_ITEM set as a URL parameter for the webview. We don't want that :'( - Lucas (9/29/23)",success,,,success,true~4413|error~99990,,,SELECTED_ENCODED_B64_STOLEN_ITEM,,,
+4413,A,SetFormID - FORM_ID,,,,,,,,,,,SetFormID,"This action node used in conjunction with many embedded webviews. In case a solution has multiple webviews that send JS events to the solution, this action node ensures that they do not get mixed up. It assigns a specific for ID to an upcoming webview, so that events coming from that webview will be associated with this specific ID. 
+
+In essense, this script simply increments FORM_ID by 1, or sets it equal to 1 if it doesn't exist yet.",success,,,success,true~442|error~99990,,,FORM_ID,,,
+442,D,Items stolen webview,,,,1,4421,,webview,Add item~https://s3.us-west-2.amazonaws.com/preview.pypestream.com/cx/ItemsClaimedForm10.html?env={ENVIRONMENT}&timeout=1000&formId={FORM_ID}&form={SELECTED_ENCODED_B64_STOLEN_ITEM},1,,,,,,,,,,,,,,
+4421,A,GetStolenItemsEvents - Items stolen data,,,,,,,,,,,GetStolenItemsEvents,,success,,"{
+  ""event_mapping"": {
+        ""form"": {
+            ""stolenItem"": ""STOLEN_ITEM""
+        }
+  },
+  ""form_id"": ""FORM_ID""
+}",success,true~4423|error~99990,,,"STOLEN_ITEM,DESCRIPTION,QUANTITY,CONDITION,AGE,COST,FORM_ID",,,
+4423,A,ParseStolenItemsList,,,,,,,,,,,ParseStolenItemsList,"This action node will iterate through the ""STOLEN_ITEMS_LIST"" global variable and assign the values as global vars. Here's an example of what the STOLEN_ITEMS_LIST could look like (1 item in this list; could be multiple tho)
+
+[{'description': 'samsung 5', 'quantity': '2', 'condition': 'Above Average', 'age': '54', 'cost': '$123.00', 'uploadFile': 'No'}]
+
+If 'uploadFile' is 'Yes', let's route them to the upload file node",success,,,success,true~44231|error~44230,,,"STOLEN_ITEM,DESCRIPTION,QUANTITY,CONDITION,AGE,COST,UPLOAD_FILE,FORM_ID,PHOTO_URL,ITEM_ID,STOLEN_ITEMS_LIST_FINAL",,,
+44230,D,ParseStolenItemsList →  Error Message,,,,,,"Sorry, I encountered a technical issue while adding your stolen item. Please re-enter the information.",button,<<fal fa-arrow-alt-circle-right>>  Continue~442,1,disable_input,,,,,,,,,,,,,
+44231,A,FinalStolenItemsList,,,,,,,,,,,FinalStolenItemsList,"We need to have a new global variable called ""STOLEN_ITEMS_LIST_FINAL"" that saves the final list of stolen items.
+
+When the user goes back to the form, the global variable ""STOLEN_ITEMS_LIST"" is reset (due to JS events stuff). As such, we store the ""STOLEN_ITEMS_LIST"" into the new list ""STOLEN_ITEMS_LIST"" so we don't miss any info when ""STOLEN_ITEMS_LIST"" is reset.",success,,,success,true~4424|upload_image~443|error~99990,,,"STOLEN_ITEM,UPLOAD_FILE,ITEM_ID,STOLEN_ITEMS_LIST_FINAL",,,
+4424,A,StolenItemsSummary,,,,,,,,,,,StolenItemsSummary,,success,,,success,true~44240|error~99990,,,"STOLEN_ITEM,STOLEN_ITEMS_SUMMARY,STOLEN_ITEMS_LIST_FINAL",,,
+44240,A,PostToItemizationTable,,,,,,,,,,,PostToItemizationTable,Posts to BQ Table if user has opened the link provided from Verisk,success,,,success,true~44241|error~99990,,,"SESSION_ID,POLICY_NUMBER,SAVE_NODE,VERISK_LINK,FIRSTNAME,LASTNAME,SAVE_NODE,EMAIL,CLAIM_NUMBER,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDR1,POLICYADDR2,STOLEN_ITEMS_LIST,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,STOLEN_ITEMS_SUMMARY,STOLEN_ITEM",,,
+44241,A,VarCheck - EDIT_MODE,,,,,,,,,,,VarCheck,,valid,,"{""global_var_name"":""EDIT_MODE""}",valid,true~44251|false~4425|error~99990,,,EDIT_MODE,,,
+4425,A,VariableReset - EDIT_MODE (Item's been added),,,,,,,,,,,VariableReset,,success,,,success,true~44250|error~99990,,,EDIT_MODE,,,
+44250,D,Items Stolen Summary - Item has been added,,,,,,"Thanks, your **{DESCRIPTION}** has been added!
+
+Would you like to add another item?",button,"<<fal fa-plus-circle>> Add another item~4412|
+<<far fa-arrow-alt-circle-right>> No, continue~444",1,disable_input,,,,,,,,,,,,,
+44251,A,VariableReset - EDIT_MODE (Item was updated),,,,,,,,,,,VariableReset,,success,,,success,true~44252|error~99990,,,EDIT_MODE,,,
+44252,D,Items Stolen Summary - Item has been edited,,,,,,"Thank you, your **{DESCRIPTION}** has been updated!
+
+Would you like to add or edit another item?",button,"<<fal fa-plus-circle>> Add another item~4412|
+<<far fa-pen-square>> Edit item~4426|
+<<far fa-arrow-alt-circle-right>> No, continue~444",1,disable_input,,,,,,,,,,,,,
+4426,A,StolenItemsListpicker,,,,,,,,,,,StolenItemsListpicker,Generates a dynamic listpicker of the stolen items based on what the user selected,"success,listpicker",,,success,true~4427|error~99990,,,STOLEN_ITEMS_LIST_FINAL,,,
+4427,D,Display Stolen Items in LP,,,,1,4428,Which item would you like to edit?,selection,{4426*listpicker},1,disable_input,,,,,,,,,,SELECTED_ENCODED_B64_STOLEN_ITEM,,,
+4428,A,ProcessSelectedLPValue2,,,,,,,,,,,ProcessSelectedLPValue2,Processes the selected value from a dynamically generated image listpicker.,success,,"{""global_var_name"":""SELECTED_ENCODED_B64_STOLEN_ITEM""}",success,true~44281|go_back~444|error~99990,,,SELECTED_ENCODED_B64_STOLEN_ITEM,,,
+44281,A,AssignVariable - EDIT_MODE,,,,,,,,,,,AssignVariable,"Description:
+Sets the values for any number of global variables - can be to either hardcoded values or the values of other global variables.
+
+Input:
+Destination global variables (that we want to assign values to, defined in param input)
+Values to assign (can be either an ""origin"" global variable, i.e. variable to take the value from, or a hardcoded value)
+
+Output Values:
+Newly assigned global variables",success,,"{
+  ""set"": {
+    ""EDIT_MODE"": ""true""
+  }
+}",success,true~4413|error~99990,,,EDIT_MODE,,,
+4429,D,Email,,,,1,44291,What **email** should we send the claim confirmation to?,,,1,,,,,,,,,,,EMAIL,,,
+44291,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~44293|false~44292|error~99990,,,EMAIL,,,
+44292,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,<<far fa-undo>> Try again~4429,1,disable_input,,,,,,,,,,,,,
+44293,A,SendItemizationEmail,,,,,,,,,,,SendItemizationEmail,"Sends a formatted email to Travelers with details of each item stolen (ex. description, cost, etc.).
+
+This action node also sends images as attachments",success,,,success,true~4434|error~99990,,,"STOLEN_ITEMS_LIST,CLAIM_NUMBER,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,VERISK_LINK",,,
+443,D,Uploading files,,,,1,4431,"Please upload your supporting documents and images here.
+
+*You can upload purchase receipts, bank/credit card statements, owners manuals, product registration, or photos of the item, etc.*",file_upload,"{""type"": ""action_node"",""upload_label"":""Upload Image"",""cancel_label"":""Skip"",""action_script"": ""UploadImageGCS""}",1,disable_input,,,,,,,,,,,,,
+4431,A,UploadImageGCS,,,,,,,,,,,UploadImageGCS,"Uploads the image to Google Cloud Storage and returns a url.
+
+If the user selected the ""cancel"" option, then goes to success=cancel.
+Returns the full URL of the image as the global var in ""image_url_var"".
+Returns the image URL stripped of ""https://"" as the global var in ""rich_asset_url_var"", so that it could be used to re-display.
+
+Note: for this action node to work, you need to have a gcs_client_secret.py file uploaded to your action nodes folder, and reference it in the solution's app.py config file.",success,file_info:443,"{""image_url_var"": ""PHOTO"",
+ ""rich_asset_url_var"": ""PHOTO_URL""}",success,true~4432|cancel~4433|false~99990|error~99990,,,"PHOTO_URL,PHOTO",,,
+4432,A,AppendPhotoToList,,,,,,,,,,,AppendPhotoToList,"This action node will retrieve the PHOTO_URL global variable and save it within a list. We want to save the photos into a list called ""PHOTO_URL_LIST"" so we can use it in the SendItemizationEmail action node. We're gonna use the list of image URLs and send them as attachments to Travelers.",success,,,success,true~44321|error~99990,,,"PHOTO_URL_LIST,PHOTO_URL",,,
+44321,A,PostToItemizationTable,,,,,,,,,,,PostToItemizationTable,Posts to BQ Table if user has opened the link provided from Verisk,success,,,success,true~4434|error~99990,,,"SESSION_ID,POLICY_NUMBER,SAVE_NODE,VERISK_LINK,FIRSTNAME,LASTNAME,SAVE_NODE,EMAIL,CLAIM_NUMBER,POLICYADDRSTATE,POLICYADDRCITY,POLICYADDRPOSTAL,POLICYADDR1,POLICYADDR2,STOLEN_ITEMS_LIST,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,STOLEN_ITEMS_SUMMARY,STOLEN_ITEM",,,
+4433,D,Uploading files - Cancel,,,,,,"No problem, your item has been added without any additional pictures or files. 
+
+Would you like to add another item?",button,"<<fal fa-plus-circle>> Add item~4412|
+<<far fa-arrow-alt-circle-right>> No, continue~444",1,disable_input,,,,,,,,,,,,,
+4434,D,Uploading files - Success,,,,,,"Thanks, your image has been attached to the item.
+
+Would you like to add another image or item?",button,"<<fal fa-plus-circle>> Add another item~4412|
+<<far fa-camera>> Add another image~443|
+<<far fa-arrow-alt-circle-right>> No, continue~444",1,disable_input,,,,,,,,,,,,,
+444,A,ParseStolenItemsList,,,,,,,,,,,ParseStolenItemsList,"This action node will iterate through the ""STOLEN_ITEMS_LIST"" global variable and assign the values as global vars. Here's an example of what the STOLEN_ITEMS_LIST could look like (1 item in this list; could be multiple tho)
+
+[{'description': 'samsung 5', 'quantity': '2', 'condition': 'Above Average', 'age': '54', 'cost': '$123.00', 'uploadFile': 'No'}]
+
+If 'uploadFile' is 'Yes', let's route them to the upload file node",success,,,success,true~4441|error~99990,,,"STOLEN_ITEM,DESCRIPTION,QUANTITY,CONDITION,AGE,COST,UPLOAD_FILE,FORM_ID,PHOTO_URL,ITEM_ID,STOLEN_ITEMS_LIST_FINAL",,,
+4441,A,FinalStolenItemsList,,,,,,,,,,,FinalStolenItemsList,"We need to have a new global variable called ""STOLEN_ITEMS_LIST_FINAL"" that saves the final list of stolen items.
+
+When the user goes back to the form, the global variable ""STOLEN_ITEMS_LIST"" is reset (due to JS events stuff). As such, we store the ""STOLEN_ITEMS_LIST"" into the new list ""STOLEN_ITEMS_LIST"" so we don't miss any info when ""STOLEN_ITEMS_LIST"" is reset.
+
+Keep the ""upload_image"" what's next to 4442. This is by design.",success,,,success,true~4442|upload_image~4442|error~99990,,,"STOLEN_ITEM,UPLOAD_FILE,ITEM_ID,STOLEN_ITEMS_LIST_FINAL",,,
+4442,A,StolenItemsSummary,,,,,,,,,,,StolenItemsSummary,,success,,,success,true~4443|error~99990,,,"STOLEN_ITEMS_LIST,STOLEN_ITEMS_SUMMARY,STOLEN_ITEMS_LIST_FINAL",,,
+4443,D,Display stolen items summary,,,,,,"Please review the summary of the item(s) you've added:
+
+
+{STOLEN_ITEMS_SUMMARY}",button,"<<far fa-check>> Submit~445|
+<<far fa-pen-square>> Edit item~4426|
+<<fal fa-plus-circle>> Add item~4412",1,disable_input,,,,,,,,,,,,,
+44421,D,Next Steps Language,,,,,,"Thank you, we've received your information. Your Claim professional will reach out to you shortly with next steps.",button,<<far fa-check>> Submit~445,1,disable_input,,,,,,,,,,,,,
+445,A,"PostEventToBQ → Phase 3 End Time
+
+✓",,,,,,,,,,,PostEventToBQ,Phase 3 & Itemization End,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Phase 3 End"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~4450|error~99990,,,SESSION_ID,,,
+4450,A,"PostEventToBQ → Itemization Complete
+
+(Reporting Purposes)
+
+✓",,,,,,,,,,,PostEventToBQ,Posts to metric_data_2 for reporting,success,,"{
+    ""table_id"": ""travelers_data_2.metric_data_2"",
+    ""columns"": {
+        ""event"": ""Itemization Complete"",
+        ""session_id"": ""{SESSION_ID}""
+    }
+}",success,true~4451|error~99990,,,SESSION_ID,,,
+4451,A,"PostToBQTableItemizationComplete → Itemization Complete
+
+✓",,,,,,,,,,,PostToBQTableItemizationComplete,"Posts to BQ after the user has successfully filed a claim and completed the webview. We're posting to BQ so that if the user tries to come back to the solution we're gonna be like ""nah nah you already did this sorry"" (see action node CheckBQUserData)",success,,,success,true~4452|error~99990,,,"POLICY_NUMBER,PHONE_NUMBER,SESSION_ID,LASTURL,USER_PLATFORM,CLAIM_NUMBER,IS_TRAINING_BOOLEAN,ORIGINATOR,CLAIM_FILER",,,
+4452,A,CheckEnv → Sandbox vs. Live,,,,,,,,,,,CheckEnv,"Checks if we're in sandbox or live
+
+If we're in sandbox, we'll ask for the the user's email address which we'll pass to the SendItemizationEmail action node.
+
+If we're in live, we'll skip that portion and send the email directly to Travelers' inbox. - Lucas (10/11/23)",success,,,success,sandbox~4453|live~446|error~99990,,,,,,
+4453,D,Ask for email address (itemization email),,,,1,4454,"*This message will only appear in sandbox for testing* 
+
+Where would you like the itemization email sent?",,,1,,,,,,,,,,,EMAIL,,,
+4454,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~446|false~4455|error~99990,,,EMAIL,,,
+4455,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,<<far fa-undo>> Try again~4453,1,disable_input,,,,,,,,,,,,,
+446,A,SendItemizationEmail25MB,,,,,,,,,,,SendItemizationEmail25MB,"Sends a formatted email to Travelers with details of each item stolen (ex. description, cost, etc.).
+
+This action node also sends images as attachments to the alias PropSTP@travelers.com 
+
+2/20/24 Update
+
+- The action node was originally called SendItemizationEmail. It has been updated to SendItemizationEmail25MB (CXD-1780). We were encountering an issue where the action node wouldn't properly fire if the attachments were larger than 25MB.
+
+We are now capping the attachments at 25MB while letting Travelers know (in the email body) that there are more than 25MB worth of attachments.",success,,,success,true~448|false~448|error~99990,,,"STOLEN_ITEMS_LIST,CLAIM_NUMBER,PHOTO_URL_LIST,EMAIL,STOLEN_ITEMS_LIST_FINAL,REMARKS_NOTE,POLICE_REPORT,POLICE_DEPARTMENT,CASE_NUMBER,PROPERTY_OWNER,BUSINESS_PURPOSE,INVESTIGATION_PASSED,VERISK_LINK",,,
+447,A,"CheckPolicyType
+
+[Q1 vs. Q2]",,,,,,,,,,,CheckPolicyType,"Checks to see if the user has a QTM or Q2 policy type.
+
+If the user is QTM (Quantum 1), we'll show them a different message post submission. Only QTM users will be allowed to Phase 4 so the verbiage will contain additional info.",success,,,success,"qtm~448|
+quantum_2~448|
+error~99990",,,QUANTUM_POLICY,,,
+4471,D,"Post Submit Language
+
+[Phase 3 → Phase 4]",,,,,666,"Thank you, we've receieved your information. You'll receive a text once your Claim Professional has reviewed your stolen items.",,,,,,,,,,,,,,,,,
+448,D,"Post Submit Language
+
+[★ Phase 3 complete ★]",,,,,666,"Thank you, we've received your information. You'll receive a text once your Claim professional has reviewed your stolen items.",,,,,,,,,,,,,,,,,
+5,D,Alabama →  (Generic),,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+51,D,Fraud Language → Alaska,,,,,,"A person who knowingly and with intent to injure, defraud, or deceive an insurance company files a claim containing false, incomplete, or misleading information may be prosecuted under state law.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+511,D,Fraud Language → Arizona,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss is subject to criminal and civil penalties.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5111,D,Arkansas,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5112,D,California,,,,,,Any person who knowingly presents a false or fraudulent claim for the payment of a loss is guilty of a crime and may be subject to fines and confinement in state prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5113,D,Colorado,,,,,,"It is unlawful to knowingly provide false, incomplete, or misleading facts or information to an insurance company for the purpose of defrauding or attempting to defraud the company. Penalties may include imprisonment, fines, denial of insurance, and civil damages. Any insurance company or agent of an insurance company who knowingly provides false, incomplete, or misleading facts or information to a policyholder or claimant for the purpose of defrauding or attempting to defraud the policyholder or claimant with regard to a settlement or award payable from insurance proceeds shall be reported to the Colorado division of insurance within the department of regulatory agencies.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5114,D,Connecticut →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5115,D,Delaware,,,,,,"Any person who knowingly, and with intent to injure, defraud or deceive any insurer, files a statement of claim containing any false, incomplete or misleading information is guilty of a felony.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5116,D,District of Columbia,,,,,,"WARNING: It is a crime to provide false or misleading information to an insurer for the purpose of defrauding the insurer or any other person. Penalties include imprisonment and/or fines. In addition, an insurer may deny insurance benefits if false information materially related to a claim was provided by the applicant.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5117,D,Florida,,,,,,"Any person who knowingly and with intent to injure, defraud, or deceive any insurer files a statement of claim or an application containing any false, incomplete, or misleading information is guilty of a felony of the third degree.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5118,D,Georgia →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5119,D,Hawaii →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+512,D,Idaho,,,,,,"Any person who knowingly, and with intent to defraud or deceive any insurance company, files a statement of claim containing any false, incomplete, or misleading information is guilty of a felony.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5121,D,Illinois →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5122,D,Indiana,,,,,,"A person who knowingly and with intent to defraud an insurer files a statement of claim containing any false, incomplete, or misleading information commits a felony.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5123,D,Iowa →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5124,D,Kansas →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5125,D,Kentucky,,,,,,"Any person who knowingly and with intent to defraud any insurance company or other person files a statement of claim containing any materially false information or conceals, for the purpose of misleading, information concerning any fact material thereto commits a fraudulent insurance act, which is a crime.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5126,D,Louisiana,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5127,D,Maine,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties may include imprisonment, fines or a denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5128,D,Maryland,,,,,,Any person who knowingly or willfully presents a false or fraudulent claim for payment of a loss or benefit or who knowingly or willfully presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5129,D,Massachusetts →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+513,D,Michigan →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5131,D,Minnesota,,,,,,A person who files a claim with intent to defraud or helps commit a fraud against an insurer is guilty of a crime.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5132,D,Mississippi →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5133,D,Missouri →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5134,D,Montana →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5135,D,Nebraska →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5136,D,Nevada →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5137,D,New Hampshire,,,,,,"Any person who, with a purpose to injure, defraud or deceive any insurance company, files a statement of claim containing any false, incomplete or misleading information is subject to prosecution and punishment for insurance fraud, as provided in RSA 638:20.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5138,D,New Jersey,,,,,,Any person who knowingly files a statement of claim containing any false or misleading information is subject to criminal and civil penalties.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5139,D,New Mexico,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to civil fines and criminal penalties.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+514,D,New York,,,,,,"Any person who knowingly and with intent to defraud any insurance company or other person files an application for insurance or statement of claim containing any materially false information, or conceals for the purpose of misleading, information concerning any fact material thereto, commits a fraudulent insurance act, which is a crime, and shall also be subject to a civil penalty not to exceed five thousand dollars and the stated value of the claim for each such violation.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5141,D,North Carolina →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5142,D,North Dakota →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5143,D,Ohio,,,,,,"Any person who, with intent to defraud or knowing that he is facilitating a fraud against an insurer, submits an application or files a claim containing a false or deceptive statement is guilty of insurance fraud.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5144,D,Oklahoma,,,,,,"Warning: Any person who knowingly, and with intent to injure, defraud or deceive any insurer, makes any claim for the proceeds of an insurance policy containing any false, incomplete or misleading information is guilty of a felony.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5145,D,Oregon,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5146,D,Pennsylvania,,,,,,"Any person who knowingly and with intent to defraud any insurance company or other person files an application for insurance or statement of claim containing any materially false information or conceals for the purpose of misleading, information concerning any fact material thereto commits a fraudulent insurance act, which is a crime and subjects such person to criminal and civil penalties.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5147,D,Puerto Rico →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5148,D,Rhode Island,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5149,D,South Carolina →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+515,D,South Dakota →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5151,D,Tennessee,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5152,D,Texas →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5153,D,Utah →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5154,D,Vermont →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5155,D,Virginia,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5156,D,Washington,,,,,,"It is a crime to knowingly provide false, incomplete, or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines, and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5157,D,West Virginia,,,,,,Any person who knowingly presents a false or fraudulent claim for payment of a loss or benefit or knowingly presents false information in an application for insurance is guilty of a crime and may be subject to fines and confinement in prison.,button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5158,D,Wisconsin →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+5159,D,Wyoming →  Generic,,,,,,"It is a crime to knowingly provide false, incomplete or misleading information to an insurance company for the purpose of defrauding the company. Penalties include imprisonment, fines and denial of insurance benefits.",button,<<fal fa-check>> OK~4402,1,disable_input,,,,,,,,,,,,,
+6,A,GenerateVeriskToken,,,,,,,,,,,GenerateVeriskToken,Generates access token for the GenerateVeriskLink action node,success,,,success,true~666|error~666,,,VERISK_ACCESS_TOKEN,,,
+61,A,GenerateVeriskLink,,,,,,,,,,,GenerateVeriskLink,"If the user answers the investigative questions in a specific way, we'll generate a Verisk link",success,,,success,true~62|error~99990,,,"VERISK_LINK,VERISK_ACCESS_TOKEN,CLAIM_NUMBER,POLICY_NUMBER,PHONE_FORMATTED,FIRSTNAME,LASTNAME,POLICYADDRPOSTAL,POLICYADDRSTATE,POLICYADDR1,POLICYADDR2,POLICYADDRCITY,POLICYADDRPOSTAL,BUILDINGDAMAGE,PYPESTREAM_TESTING,PRODUCER_CODE,INVESTIGATION_PASSED,POLICY_DEDUCTIBLE,REPLACEMENT_COST_ENDORSEMENT_PRESENT,POLICY_LIMIT,QUANTUM_POLICY,SNAPSHOT_ID",,,
+62,D,Display Verisk Link (Test),,,,,,Verisk Link (Test) → [Click here]({VERISK_LINK}) for itemization.,button,End chat~666,1,disable_input,,,,,,,,,,,,,
+80,D,Custom future-only datepicker (single date),,,,1,801,,webview,Please select a date~https://preview.pypestream.com/cx/travelers_datepicker_4/index.html?env={ENVIRONMENT}&picker=datepicker&minDate={FIRST_DAY_TWO_YEARS_AGO}&maxDate={CURRENT_DATE},1,,,,,,,,,,,,,,
+801,A,GetEventsDate,,,,,,,,,,,GetEventsDate,"Action node to retrieve JS events specificially for the custom datepicker hosted here: https://preview.pypestream.com/cx/gf_datepicker/index.html
+
+Input:
+- {""type"":""single""} for single-date version of the datepicker webview
+- {""type"":""range""} for range version of the datepicker webview",success,,"{""type"":""single""}",success,true~8011|false~8011|error~99990,,,"DOL_DISPLAY,DOL",,,
+8011,A,ValidateDate - DOL,,,,,,,,,,,ValidateDate,"'- Validates the date format
+- Optionally checks if the date is the past / future / not past / not future /present / not present.
+- Optionally outputs to a specified date format
+
+Required input:
+- global_var_name: name of input global variable will be validated.
+
+Optional input:
+- output_format: use it if we want to change date format
+- timezone: use timezone if we want to check today in a specified timezone, list of timezone names: https://gist.github.com/heyalexej/8bf688fd67d7199be4a1682b3eec7568
+- compare_with_today: one of these values: past, future, present, not_past, not_future, not_present
+- compare_with_date: supports: before_date, after_date, not_before_date, not_after_date, not_date. We can use one / all of them at once.
+
+Output:
+- success = true --> valid date format with corresponding to compare_with_today value if available.
+- success = false --> invalid date format
+- success = not_past_false, future_false,... correspond to compare_with_today (not_past, future,...) value if availble.
+- success = compare_with_date_false if the compare with dates false
+- success = error --> catch all exception error",valid,,"{
+  ""global_var_name"": ""DOL"",
+  ""compare_with_today"": ""not_future"",
+  ""output_format"": ""%m-%d-%Y"",
+  ""output_reformatted_date"": ""USER_DOL""
+}",valid,true~803|false~8012|not_future_false~8012|error~99990,,,"DOL,USER_DOL",,,
+8012,D,ValidateDate - False (Date in future),,,,,,"I'm sorry, it looks like you may have chosen a date in the **future**. Please let us know when the items were stolen.",button,<<fal fa-calendar>> Select date~80,1,disable_input,,,,,,,,,,,,,
+8013,D,Confirm date,,,,,,You selected **{USER_DOL}**. Is this date correct?,button,"<<far fa-check>> Yes, continue~224|
+<<fal fa-edit>> Edit incident date~22",1,disable_input,,,,,,,,,,,,,
+802,D,ValidateDate - False (Date in future),,,,,,"I'm sorry, it looks like you may have chosen a date in the **future**. Please let us know when the theft occurred.",button,<<fal fa-calendar>> Select date~80,1,disable_input,,,,,,,,,,,,,
+803,A,EDIT RETURN | INCIDENT DATE,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Policy1,Policy2""}",valid,policy1~11820|policy2~11821|false~99990|error~99990,,,SUMMARY_RETURN,,,
+81,D,Enter Name - Policyholder,,,,1,810,Please enter the **full name** of the policyholder.,,,1,,,,,,,,,,,FULLNAME,,,
+810,A,ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""FULLNAME"",""firstname_output"":""FIRSTNAME"",""lastname_output"":""LASTNAME""}",valid,true~812|false~811|error~811,,,"FULLNAME,FIRSTNAME,LASTNAME",,,
+811,D,Name fail - Ask for full name again,,,,1,81,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",,,1,,,,,,,,,,,FULLNAME,,,
+812,A,EDIT RETURN | INSURED NAME,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Contact1,Contact2,Contact3""}",valid,contact1~1345|contact2~1347|contact3~1348|false~99990|error~99990,,,SUMMARY_RETURN,,,
+82,D,Enter Phone Number,,,,1,820,Please enter your phone number.,,,1,,,,,,,,,,,PHONE,,,
+820,A,ValidatePhoneAndReturnStripped,,,,,,,,,,,ValidatePhoneAndReturnStripped,"Validate that the input phone number is either 10 digits, or 11 with 1 being the first digit (i.e. proper format for U.S. phone numbers). Also returns a new variable that represents the phone number stripped of all special characters.",valid,,"{""original_phone_number"":""PHONE"",""stripped_phone_number"":""PHONE_STRIPPED""}",valid,true~823|false~821|error~99990,,,"PHONE,PHONE_STRIPPED",,,
+821,D,Phone validation failed,,,,,,"I'm sorry, it doesn't look like you've entered a valid phone number. Would you like to try another number?",button,<<far fa-undo>> Try again~82,1,disable_input,,,,,,,,,,PHONE,,,
+823,A,FormatPhone,,,,,,,,,,,FormatPhone,"Takes a string of 10 digits, or 11 digits starting with ""1"", and formats it as XXX-XXX-XXXX / 1-XXX-XXX-XXXX.",success,,"{""input_var"":""PHONE_STRIPPED"",""output_var"":""PHONE_FORMATTED""}",success,true~824|false~99990|error~99990,,,"PHONE_STRIPPED, PHONE_FORMATTED",,,
+824,A,EDIT RETURN | PHONE NUMBER,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Contact1,Contact2,Contact3""}",valid,contact1~1345|contact2~1347|contact3~1348|false~99990|error~99990,,,SUMMARY_RETURN,,,
+83,D,Email,,,,1,830,What **email** should we send the claim confirmation to?,,,1,,,,,,,,,,,EMAIL,,,
+830,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""EMAIL""}",valid,true~832|false~831|error~99990,,,EMAIL,,,
+831,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~83|
+<<far fa-times>> I don't have an email address~8311",1,disable_input,,,,,,,,,,,,,
+8311,A,AssignVar - EMAIL (User has no email address),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""EMAIL"": ""N/A""
+  }
+}",success,true~832|error~99990,,,EMAIL,,,
+832,A,EDIT RETURN | EMAIL,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Contact1,Contact2,Contact3""}",valid,contact1~1345|contact2~1347|contact3~1348|false~99990|error~99990,,,SUMMARY_RETURN,,,
+84,D,Agent - Name,,,,1,840,Please enter the **full name** of the person filing this claim on behalf of the insured.,,,1,,,,,,,,,,,AGENT_FULLNAME,,,
+840,A,ParseFullName,,,,,,,,,,,ParseFullName,,valid,,"{""fullname_input"":""AGENT_FULLNAME"",""firstname_output"":""AGENT_FIRSTNAME"",""lastname_output"":""AGENT_LASTNAME""}",valid,true~842|false~841|error~841,,,"AGENT_FULLNAME,AGENT_FIRSTNAME,AGENT_LASTNAME",,,
+841,D,Name fail - Ask for name again,,,,,,"Hmm...it looks like you may have entered something other than a **full name** (e.g. a first name or a name with numbers or special characters). 
+
+**Please try again**.",button,<<far fa-undo>> Try again~84,1,disable_input,,,,,,,,,,AGENT_FULLNAME,,,
+842,A,EDIT RETURN | AGENT NAME,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Contact1,Contact2,Contact3""}",valid,contact1~1345|contact2~1347|contact3~1348|false~99990|error~99990,,,SUMMARY_RETURN,,,
+85,D,Insured Email Collection,,,,1,850,Please enter the **insured person's email address** now.,,,1,,,,,,,,,,,INSURED_EMAIL,,,
+850,A,ValidateEmail,,,,,,,,,,,ValidateEmail,,valid,,"{""global_vars"":""INSURED_EMAIL""}",valid,true~852|false~851|error~99990,,,INSURED_EMAIL,,,
+851,D,Email validation failed,,,,,,It doesn't look like that's a valid **email address**. Would you like to try again?,button,"<<far fa-undo>> Try again~85|
+<<far fa-times>> I don't have an email address~8511",1,disable_input,,,,,,,,,,,,,
+8511,A,AssignVar - EMAIL (User has no email address),,,,,,,,,,,AssignVariable,,success,,"{
+  ""set"": {
+    ""EMAIL"": ""N/A""
+  }
+}",success,true~852|error~99990,,,EMAIL,,,
+852,A,EDIT RETURN | INSURED EMAIL,,,,,,,,,,,MultiMatchRouting,,valid,,"{""global_vars"":""SUMMARY_RETURN"",""input_vars"":""Contact1,Contact2,Contact3""}",valid,contact1~1345|contact2~1347|contact3~1348|false~99990|error~99990,,,SUMMARY_RETURN,,,
