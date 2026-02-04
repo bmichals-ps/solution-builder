@@ -57,7 +57,8 @@ import {
   Download,
   Rocket,
   ChevronDown,
-  Key
+  Key,
+  AlertCircle
 } from 'lucide-react';
 
 // ============================================
