@@ -129,11 +129,24 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
     };
   }
   
-  const path = event.path.replace('/.netlify/functions/composio', '').replace('/api/composio', '');
+  // Parse path - handle both direct function calls and redirected API calls
+  let path = event.path || '';
+  path = path.replace('/.netlify/functions/composio', '');
+  path = path.replace('/api/composio', '');
+  // Ensure path starts with /
+  if (path && !path.startsWith('/')) {
+    path = '/' + path;
+  }
+  // Handle empty path
+  if (!path) {
+    path = '/';
+  }
+  
+  console.log('[Composio] Request path:', event.path, '-> parsed as:', path);
   
   try {
     // POST /connect - Initiate OAuth connection
-    if (event.httpMethod === 'POST' && path === '/connect') {
+    if (event.httpMethod === 'POST' && (path === '/connect' || path.endsWith('/connect'))) {
       const { integrationId, userId, redirectUrl } = JSON.parse(event.body || '{}');
       const toolkitSlug = TOOLKIT_SLUGS[integrationId] || integrationId;
       
@@ -175,7 +188,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
     }
     
     // GET /status/:id - Check connection status
-    if (event.httpMethod === 'GET' && path.startsWith('/status/')) {
+    if (event.httpMethod === 'GET' && (path.startsWith('/status/') || path.includes('/status/'))) {
       const connectionId = path.replace('/status/', '');
       
       const response = await fetch(
@@ -204,7 +217,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
     }
     
     // POST /export-sheet - Export CSV to Google Sheets
-    if (event.httpMethod === 'POST' && path === '/export-sheet') {
+    if (event.httpMethod === 'POST' && (path === '/export-sheet' || path.endsWith('/export-sheet'))) {
       const { csvContent, fileName, userId } = JSON.parse(event.body || '{}');
       
       console.log(`[Composio] Exporting to Google Sheets: ${fileName}`);
@@ -374,7 +387,7 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
     }
     
     // POST /update-sheet - Update existing Google Sheet with new CSV content
-    if (event.httpMethod === 'POST' && path === '/update-sheet') {
+    if (event.httpMethod === 'POST' && (path === '/update-sheet' || path.endsWith('/update-sheet'))) {
       const { spreadsheetId, csvContent, userId } = JSON.parse(event.body || '{}');
       
       if (!spreadsheetId) {
