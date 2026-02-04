@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../contexts/AuthContext';
 import type { WizardStep } from '../types';
@@ -11,7 +12,8 @@ import {
   Rocket,
   Check,
   LogOut,
-  User
+  User,
+  Wand2
 } from 'lucide-react';
 
 const steps: { id: WizardStep; label: string; icon: React.ElementType }[] = [
@@ -25,6 +27,7 @@ const steps: { id: WizardStep; label: string; icon: React.ElementType }[] = [
 ];
 
 export function Sidebar() {
+  const navigate = useNavigate();
   const { currentStep, setStep, user, activeSolutionId, savedSolutions, solution } = useStore();
   const { signOut } = useAuth();
   
@@ -61,7 +64,7 @@ export function Sidebar() {
       {/* Logo - Click to go to dashboard */}
       <div className="h-16 flex items-center px-5 border-b border-[rgba(255,255,255,0.04)]">
         <button 
-          onClick={() => setStep('dashboard')}
+          onClick={() => navigate('/dashboard')}
           className="flex items-center gap-2.5 hover:opacity-80 transition-opacity"
         >
           <img 
@@ -69,7 +72,7 @@ export function Sidebar() {
             alt="Solution Builder" 
             className="w-8 h-8 rounded-lg"
           />
-          <span className="text-[#e8e8f0] font-semibold text-[15px] tracking-[-0.01em]">Solution Builder</span>
+          <span className="text-[#e8e8f0] font-semibold text-[15px] tracking-[-0.01em]">Ben's Solution Builder</span>
         </button>
       </div>
       
@@ -137,6 +140,25 @@ export function Sidebar() {
           })}
         </ul>
       </nav>
+      
+      {/* Quick Actions */}
+      <div className="px-3 py-4 border-t border-[rgba(255,255,255,0.04)]">
+        <div className="text-overline px-3 mb-2">Tools</div>
+        <button
+          onClick={() => {
+            // Navigate with activeSolutionId if available for better context
+            const path = activeSolutionId ? `/live-edit/${activeSolutionId}` : '/live-edit';
+            window.history.pushState({}, '', path);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-[10px] text-[#8585a3] hover:bg-[rgba(255,255,255,0.03)] hover:text-[#c4c4d6] transition-all duration-200"
+        >
+          <div className="w-6 h-6 rounded-full bg-[rgba(99,102,241,0.1)] border border-[rgba(99,102,241,0.2)] flex items-center justify-center">
+            <Wand2 className="w-3.5 h-3.5 text-[#a5b4fc]" />
+          </div>
+          <span className="text-[13px] font-medium">Live Edit</span>
+        </button>
+      </div>
       
       {/* User & Sign Out */}
       <div className="p-4 border-t border-[rgba(255,255,255,0.04)]">

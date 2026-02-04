@@ -53,11 +53,34 @@ export const SYSTEM_NODES: NodeTemplate[] = [
     num: 999, type: 'D', name: 'Agent Transfer',
     behaviors: 'xfer_to_agent',
   },
+  // GenAI Fallback Chain (1800-1804) - AI understanding before human escalation
   {
-    num: 1800, type: 'D', name: 'OutOfScope',
+    num: 1800, type: 'A', name: 'OutOfScope → Try GenAI',
     intent: 'out_of_scope',
-    message: "I'm not sure I understood that.",
-    richType: 'button', richContent: 'Start Over~1|Talk to Agent~999',
+    command: 'GenAIFallback', description: 'AI attempts to understand with company knowledge', output: 'result',
+    paramInput: '{"question":"{LAST_USER_MESSAGE}","context":"{LAST_TOPIC}","entity":"{LAST_ENTITY}","conversation_context":"{CONVERSATION_CONTEXT}","company_name":"{COMPANY_NAME}","company_context":"{COMPANY_CONTEXT}","bot_persona":"{BOT_PERSONA}","conversation_history":"{CONVERSATION_HISTORY}"}',
+    decVar: 'result', whatNext: 'understood~1802|route_flow~1803|not_understood~1804|error~1804',
+    variable: 'AI_RESPONSE',
+  },
+  {
+    num: 1802, type: 'D', name: 'GenAIResponse → AI Answer',
+    message: '{AI_RESPONSE}',
+    nextNodes: '1800', // User can type follow-up questions → goes back to AI
+    richType: 'quick_reply',
+    richContent: '{"type":"static","options":[{"label":"Back to Menu","dest":200},{"label":"All Done","dest":666},{"label":"Talk to Agent","dest":999}]}',
+    nluDisabled: '', // Keep NLU enabled for follow-up questions
+    ansReq: '1',
+  },
+  {
+    num: 1803, type: 'A', name: 'RouteDetectedIntent',
+    command: 'SysMultiMatchRouting', description: 'Route to detected flow', output: 'route_to',
+    paramInput: '{"global_vars":"DETECTED_INTENT","input_vars":"product,details,schedule,pricing,support"}',
+    decVar: 'route_to', whatNext: 'product~300|details~320|schedule~400|pricing~500|support~600|error~1804',
+  },
+  {
+    num: 1804, type: 'D', name: 'FallbackFail → Human Help',
+    message: 'I want to make sure I help you correctly. Let me connect you with someone who can assist.',
+    richType: 'button', richContent: 'Talk to Agent~999|Start Over~1',
     ansReq: '1', behaviors: 'disable_input',
   },
   {
@@ -69,7 +92,7 @@ export const SYSTEM_NODES: NodeTemplate[] = [
 ];
 
 // ============================================
-// STARTUP FLOW (Nodes 1-104)
+// STARTUP FLOW (Nodes 1-105)
 // ============================================
 
 export const STARTUP_NODES: NodeTemplate[] = [
@@ -83,7 +106,7 @@ export const STARTUP_NODES: NodeTemplate[] = [
   {
     num: 10, type: 'A', name: 'UserPlatformRouting',
     command: 'UserPlatformRouting', description: 'Detects device type', output: 'success',
-    decVar: 'success', whatNext: 'ios~100|android~101|desktop~102|error~103',
+    decVar: 'success', whatNext: 'ios~100|android~101|mac~102|windows~102|other~102|error~103',
   },
   {
     num: 100, type: 'A', name: 'SetVar iOS',
@@ -114,8 +137,18 @@ export const STARTUP_NODES: NodeTemplate[] = [
     num: 104, type: 'A', name: 'SysSetEnv',
     command: 'SysSetEnv', description: 'Sets environment', output: 'success',
     paramInput: '{"set_env_as":"ENV"}',
-    decVar: 'success', whatNext: 'true~200|error~99990',
+    decVar: 'success', whatNext: 'true~105|error~99990',
     variable: 'ENV',
+  },
+  // Context initialization - required for intelligent NLU and company knowledge
+  {
+    num: 105, type: 'A', name: 'InitContext → Set Context Vars',
+    command: 'SysAssignVariable', description: 'Initialize conversation context and company knowledge', output: 'success',
+    // COMPANY_NAME, COMPANY_CONTEXT, and BOT_PERSONA are populated during bot generation
+    // CONVERSATION_HISTORY is updated throughout the conversation by the platform
+    paramInput: '{"set":{"LAST_TOPIC":"","LAST_ENTITY":"","CONVERSATION_CONTEXT":"","CONTEXT_FLOW":"","COMPANY_NAME":"","COMPANY_CONTEXT":"","BOT_PERSONA":"","CONVERSATION_HISTORY":""}}',
+    decVar: 'success', whatNext: 'true~200|error~99990',
+    variable: 'LAST_TOPIC',
   },
 ];
 
@@ -244,6 +277,103 @@ export function listpicker(
   };
 }
 
+/** Context update - saves current topic/entity for intelligent follow-ups */
+export function contextUpdate(
+  nodeNum: number, 
+  topic: string, 
+  entityVar: string, 
+  contextType: string,
+  nextNode: number
+): NodeTemplate {
+  return {
+    num: nodeNum, type: 'A', name: `UpdateContext → ${topic}`,
+    command: 'SysAssignVariable', description: 'Save topic context for follow-ups', output: 'success',
+    paramInput: JSON.stringify({
+      set: {
+        LAST_TOPIC: topic,
+        LAST_ENTITY: `{${entityVar}}`,
+        CONVERSATION_CONTEXT: contextType,
+      }
+    }),
+    decVar: 'success', whatNext: `true~${nextNode}|error~${nextNode}`,
+    variable: 'LAST_ENTITY',
+  };
+}
+
+/** Enhanced intent routing with synonyms */
+export function enhancedIntentRouting(
+  nodeNum: number,
+  intentsWithSynonyms: Array<{ intent: string; synonyms: string[]; dest: number }>,
+  fallbackNode: number = 1800
+): NodeTemplate {
+  // Flatten all intents and synonyms into input_vars
+  const allKeywords: string[] = [];
+  const routingParts: string[] = [];
+  
+  for (const item of intentsWithSynonyms) {
+    allKeywords.push(item.intent);
+    allKeywords.push(...item.synonyms);
+    
+    // Map primary intent to destination
+    routingParts.push(`${item.intent}~${item.dest}`);
+    // Map each synonym to same destination
+    for (const syn of item.synonyms) {
+      routingParts.push(`${syn}~${item.dest}`);
+    }
+  }
+  
+  routingParts.push(`error~${fallbackNode}`);
+  
+  return {
+    num: nodeNum, type: 'A', name: 'IntentRouting → Enhanced',
+    command: 'SysMultiMatchRouting', 
+    description: 'Routes with synonym coverage', 
+    output: 'next_node',
+    paramInput: JSON.stringify({
+      global_vars: 'LAST_USER_MESSAGE',
+      input_vars: allKeywords.join(','),
+    }),
+    decVar: 'next_node', 
+    whatNext: routingParts.join('|'),
+  };
+}
+
+// ============================================
+// GENAI FALLBACK NODES (for intelligent fallback)
+// ============================================
+
+export const GENAI_FALLBACK_NODES: NodeTemplate[] = [
+  {
+    num: 1800, type: 'A', name: 'OutOfScope → Try GenAI',
+    intent: 'out_of_scope',
+    command: 'GenAIFallback', description: 'AI attempts to understand with company knowledge', output: 'result',
+    paramInput: '{"question":"{LAST_USER_MESSAGE}","context":"{LAST_TOPIC}","entity":"{LAST_ENTITY}","conversation_context":"{CONVERSATION_CONTEXT}","company_name":"{COMPANY_NAME}","company_context":"{COMPANY_CONTEXT}","bot_persona":"{BOT_PERSONA}","conversation_history":"{CONVERSATION_HISTORY}"}',
+    decVar: 'result', whatNext: 'understood~1802|route_flow~1803|not_understood~1804|error~1804',
+    variable: 'AI_RESPONSE',
+  },
+  {
+    num: 1802, type: 'D', name: 'GenAIResponse → AI Answer',
+    message: '{AI_RESPONSE}',
+    nextNodes: '1800', // User can type follow-up questions → goes back to AI
+    richType: 'quick_reply',
+    richContent: '{"type":"static","options":[{"label":"Back to Menu","dest":200},{"label":"All Done","dest":666},{"label":"Talk to Agent","dest":999}]}',
+    nluDisabled: '', // Keep NLU enabled for follow-up questions
+    ansReq: '1',
+  },
+  {
+    num: 1803, type: 'A', name: 'RouteDetectedIntent',
+    command: 'SysMultiMatchRouting', description: 'Route to detected flow', output: 'route_to',
+    paramInput: '{"global_vars":"DETECTED_INTENT","input_vars":"product,details,schedule,pricing,support"}',
+    decVar: 'route_to', whatNext: 'product~300|details~320|schedule~400|pricing~500|support~600|error~1804',
+  },
+  {
+    num: 1804, type: 'D', name: 'FallbackFail → Human Help',
+    message: 'I want to make sure I help you correctly. Let me connect you with someone who can assist.',
+    richType: 'button', richContent: 'Talk to Agent~999|Start Over~1',
+    ansReq: '1', behaviors: 'disable_input',
+  },
+];
+
 // ============================================
 // TEMPLATE EXPORT FOR GENERATION PROMPT
 // ============================================
@@ -256,8 +386,11 @@ export function getTemplateContext(): string {
 ### System Nodes (include all of these):
 ${JSON.stringify(SYSTEM_NODES, null, 2)}
 
-### Startup Flow (include all of these):
+### Startup Flow (include all of these - note context initialization at node 105):
 ${JSON.stringify(STARTUP_NODES, null, 2)}
+
+### GenAI Fallback Chain (intelligent NLU before human escalation):
+${JSON.stringify(GENAI_FALLBACK_NODES, null, 2)}
 
 ### Pattern: Free Text Input
 Ask question → user types → store in variable
@@ -274,5 +407,13 @@ Ask → ValidateRegex → Store (valid) or Re-prompt (invalid)
 
 ### Pattern: Listpicker Selection
 { richType: "listpicker", richContent: {"type":"static","options":[...]}, ansReq: "1", behaviors: "disable_input", nluDisabled: "1" }
+
+### Pattern: Context Update (IMPORTANT - use after every topic/product selection)
+After showing product info or selecting a topic, update context for intelligent follow-ups:
+{ type: "A", command: "SysAssignVariable", paramInput: {"set":{"LAST_TOPIC":"topic_name","LAST_ENTITY":"{PRODUCT_NAME}","CONVERSATION_CONTEXT":"browsing"}} }
+
+### Pattern: Enhanced Intent Routing with Synonyms
+Include synonyms in SysMultiMatchRouting input_vars for better coverage:
+{ command: "SysMultiMatchRouting", paramInput: {"global_vars":"LAST_USER_MESSAGE","input_vars":"product,products,item,items,browse,ingredients,nutrition,details,more"} }
 `;
 }

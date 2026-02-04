@@ -32,10 +32,12 @@ import {
   ZoomOut,
   Maximize2,
   Code2,
-  FileCode
+  FileCode,
+  Link2
 } from 'lucide-react';
 import { SheetsSyncService } from '../services/sheets-sync';
 import { oneClickDeploy } from '../services/botmanager';
+import { exportToGoogleSheets } from '../services/composio';
 import { ScriptEditorModal } from '../components';
 import type { CustomScript } from '../types';
 
@@ -183,7 +185,12 @@ export function EditorPage() {
     extractedDetails,
     credentials,
     setInstantStep,
-    setInstantBuildResult
+    setInstantBuildResult,
+    integrations,
+    connectIntegration,
+    user,
+    activeSolutionId,
+    updateSavedSolution
   } = useStore();
   
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -194,6 +201,14 @@ export function EditorPage() {
   const [redeployError, setRedeployError] = useState<string | null>(null);
   const [parsedNodes, setParsedNodes] = useState<ParsedNode[]>([]);
   const syncService = useRef<SheetsSyncService | null>(null);
+  
+  // Google Sheets export state
+  const [exportingToSheets, setExportingToSheets] = useState(false);
+  const [sheetsExportError, setSheetsExportError] = useState<string | null>(null);
+  
+  // Check if Google Sheets is connected
+  const googleSheetsIntegration = integrations.find((i) => i.id === 'google-sheets');
+  const isSheetsConnected = googleSheetsIntegration?.connected ?? false;
   
   // Script editor state
   const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
@@ -304,9 +319,86 @@ export function EditorPage() {
     setInstantStep('results');
   };
   
-  const handleOpenSheets = () => {
+  const handleOpenSheets = async () => {
+    // Case 1: Already have a sheetsUrl - just open it
     if (instantBuildResult?.sheetsUrl) {
       window.open(instantBuildResult.sheetsUrl, '_blank');
+      return;
+    }
+    
+    // Case 2: Not connected to Google Sheets - initiate OAuth flow
+    if (!isSheetsConnected) {
+      setExportingToSheets(true);
+      setSheetsExportError(null);
+      
+      try {
+        const connected = await connectIntegration('google-sheets');
+        
+        if (!connected) {
+          setSheetsExportError('Failed to connect to Google Sheets');
+          setExportingToSheets(false);
+          return;
+        }
+        
+        // After connecting, export the CSV
+        await exportCSVToSheets();
+      } catch (e: any) {
+        console.error('Sheets connection error:', e);
+        setSheetsExportError(e.message || 'Failed to connect');
+        setExportingToSheets(false);
+      }
+      return;
+    }
+    
+    // Case 3: Connected but no sheetsUrl yet - export now
+    await exportCSVToSheets();
+  };
+  
+  const exportCSVToSheets = async () => {
+    if (!instantBuildResult?.csv) {
+      setSheetsExportError('No CSV content available to export');
+      setExportingToSheets(false);
+      return;
+    }
+    
+    setExportingToSheets(true);
+    setSheetsExportError(null);
+    
+    try {
+      const userId = user.email || `user_${Date.now()}`;
+      const fileName = `${extractedDetails?.clientName || 'Solution'}_${extractedDetails?.projectName || 'Export'}`;
+      
+      const result = await exportToGoogleSheets(
+        instantBuildResult.csv,
+        fileName,
+        userId
+      );
+      
+      if (result.success && result.spreadsheetUrl) {
+        // Update the result with the new sheetsUrl
+        setInstantBuildResult({
+          ...instantBuildResult,
+          sheetsUrl: result.spreadsheetUrl,
+          spreadsheetId: result.spreadsheetId,
+        });
+        
+        // Also update in Supabase if we have an active solution
+        if (activeSolutionId) {
+          updateSavedSolution(activeSolutionId, {
+            spreadsheetUrl: result.spreadsheetUrl,
+          });
+        }
+        
+        // Open the new spreadsheet
+        window.open(result.spreadsheetUrl, '_blank');
+      } else {
+        setSheetsExportError(result.error || 'Failed to export to Google Sheets');
+      }
+    } catch (e: any) {
+      console.error('Sheets export error:', e);
+      setSheetsExportError(e.message || 'Export failed');
+    } finally {
+      setExportingToSheets(false);
     }
   };
   
@@ -385,11 +477,44 @@ export function EditorPage() {
           {/* Sheets link */}
           <button
             onClick={handleOpenSheets}
-            disabled={!instantBuildResult?.sheetsUrl}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-[#8585a3] hover:text-white border border-white/10 rounded-lg hover:border-white/20 transition-colors disabled:opacity-50"
+            disabled={exportingToSheets}
+            className={`flex items-center gap-2 px-3 py-2 text-sm border rounded-lg transition-colors ${
+              exportingToSheets
+                ? 'text-[#22c55e] border-[#22c55e]/30 cursor-wait'
+                : sheetsExportError
+                ? 'text-red-400 border-red-500/30 hover:border-red-500/50'
+                : instantBuildResult?.sheetsUrl
+                ? 'text-[#8585a3] hover:text-white border-white/10 hover:border-white/20'
+                : !isSheetsConnected
+                ? 'text-amber-400 border-amber-500/30 hover:border-amber-500/50 hover:text-amber-300'
+                : 'text-[#22c55e] border-[#22c55e]/30 hover:border-[#22c55e]/50 hover:text-[#22c55e]'
+            }`}
+            title={
+              exportingToSheets
+                ? 'Exporting...'
+                : sheetsExportError
+                ? sheetsExportError
+                : instantBuildResult?.sheetsUrl
+                ? 'Open in Google Sheets'
+                : !isSheetsConnected
+                ? 'Connect Google Sheets'
+                : 'Export to Google Sheets'
+            }
           >
-            <ExternalLink className="w-4 h-4" />
-            Sheets
+            {exportingToSheets ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : !isSheetsConnected && !instantBuildResult?.sheetsUrl ? (
+              <Link2 className="w-4 h-4" />
+            ) : (
+              <ExternalLink className="w-4 h-4" />
+            )}
+            {exportingToSheets
+              ? 'Exporting...'
+              : instantBuildResult?.sheetsUrl
+              ? 'Sheets'
+              : !isSheetsConnected
+              ? 'Connect'
+              : 'Export'}
           </button>
           
           {/* Redeploy button */}

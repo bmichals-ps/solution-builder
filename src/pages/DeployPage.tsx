@@ -458,8 +458,11 @@ export function DeployPage() {
     setIsUploadingConfig(false);
   };
 
-  // Generate a default app.py config
+  // Generate a default app.py config with Pypestream's shared OpenAI key
   const generateDefaultConfig = () => {
+    // Pypestream's shared OpenAI API key (from environment variable)
+    const pypestreamOpenAIKey = import.meta.env.VITE_PYPESTREAM_OPENAI_KEY || '';
+    
     const config = `import os
 
 NAME = '${botId}'
@@ -472,12 +475,18 @@ PATH = os.path.dirname(__file__)
 
 PARAMS = {
     "sandbox": {
-        # Add your sandbox environment parameters here
-        # Example: 'api_key': 'your-sandbox-key',
+        # OpenAI API credentials (for GenAI fallback and AI features)
+        "openai_api_key": "${pypestreamOpenAIKey}",
+        
+        # Sentry alerting
+        "sentry_dsn": "https://62ff156d79c7b9241720b513af77e06f@o4509032988344320.ingest.us.sentry.io/4509159116046336",
     },
     "live": {
-        # Add your live environment parameters here
-        # Example: 'api_key': 'your-live-key',
+        # OpenAI API credentials (for GenAI fallback and AI features)
+        "openai_api_key": "${pypestreamOpenAIKey}",
+        
+        # Sentry alerting
+        "sentry_dsn": "https://62ff156d79c7b9241720b513af77e06f@o4509032988344320.ingest.us.sentry.io/4509159116046336",
     }
 }
 `;

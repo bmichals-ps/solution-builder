@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Plus, Search, Filter, MoreHorizontal, FileText, 
   Rocket, Archive, Clock, ChevronDown, Edit3, 
@@ -267,6 +268,7 @@ export function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | SavedSolution['status']>('all');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   
+  const navigate = useNavigate();
   const savedSolutions = useStore((state) => state.savedSolutions);
   const solutionsLoaded = useStore((state) => state.solutionsLoaded);
   const userEmail = useStore((state) => state.user.email);
@@ -302,7 +304,8 @@ export function DashboardPage() {
   
   const handleSelectSolution = (solutionId: string) => {
     setActiveSolution(solutionId);
-    setStep('solution-detail');
+    // Navigate to solution with ID in URL
+    navigate(`/solutions/${solutionId}`);
   };
   
   return (

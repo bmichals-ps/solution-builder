@@ -1256,106 +1256,6 @@ Make the answer options realistic and include example text/values in the descrip
         }
       }
     },
-    // AI Purpose Generation middleware - generates detailed bot purpose paragraph
-    {
-      name: 'ai-purpose-generation-middleware',
-      async configureServer(server) {
-        server.middlewares.use('/api/generate-purpose', async (req, res, next) => {
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          if (req.method !== 'POST') {
-            next();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', chunk => { body += chunk; });
-          req.on('end', async () => {
-            try {
-              const { companyName, botType, additionalDetails, projectType } = JSON.parse(body);
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              
-              if (!apiKey || apiKey === 'your-api-key-here') {
-                // Return a basic fallback purpose
-                const fallbackPurpose = `This ${botType || 'customer service'} bot for ${companyName || 'the company'} will help users by providing automated assistance, collecting relevant information, and routing inquiries to the appropriate resources when needed.`;
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ purpose: fallbackPurpose }));
-                return;
-              }
-              
-              console.log('[AI Purpose] Generating purpose for:', companyName, botType);
-              
-              const systemPrompt = `You are an expert at describing chatbot solutions. Generate a compelling 2-3 sentence paragraph that describes what a chatbot will do for users.
-
-The description should:
-- Be written in present tense ("This bot helps users..." not "This bot will help...")
-- Mention the company name naturally
-- Describe the key user benefits and capabilities
-- Sound professional but approachable
-- Be specific to the bot type and any additional context provided
-
-Examples of good purpose paragraphs:
-- "This customer support bot helps Netflix subscribers quickly resolve account issues, manage their subscription, and get personalized content recommendations. Users can troubleshoot streaming problems, update billing information, and access their viewing history through natural conversation."
-- "This claims bot guides Travelers Insurance policyholders through the first notice of loss (FNOL) process for property damage claims. It collects incident details, schedules inspections, and provides real-time status updates while ensuring a smooth handoff to claims adjusters when needed."
-
-Return ONLY the purpose paragraph, no quotes, no explanation.`;
-
-              const userPrompt = `Generate a purpose paragraph for:
-Company: ${companyName || 'Unknown Company'}
-Bot Type: ${botType || 'Customer Service'}
-Project Type: ${projectType || 'custom'}
-Additional Details: ${additionalDetails || 'None provided'}
-
-Write a compelling 2-3 sentence paragraph describing what this bot does for users.`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-3-5-haiku-20241022',
-                  max_tokens: 300,
-                  messages: [
-                    { role: 'user', content: userPrompt }
-                  ],
-                  system: systemPrompt
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                console.error('[AI Purpose] API error:', response.status, errorText);
-                throw new Error(`API error: ${response.status}`);
-              }
-              
-              const data = await response.json();
-              const purpose = data.content?.[0]?.text?.trim() || `This ${botType} bot helps ${companyName} customers with automated support and assistance.`;
-              
-              console.log('[AI Purpose] Generated:', purpose.substring(0, 100) + '...');
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ purpose }));
-              
-            } catch (error: any) {
-              console.error('[AI Purpose] Error:', error);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: error.message }));
-            }
-          });
-        });
-      }
-    },
     // AI Prompt Analysis middleware (for pre-filling project setup)
     {
       name: 'ai-prompt-analysis-middleware',
@@ -1416,12 +1316,9 @@ Your job is to analyze a user's description and extract/infer ALL of the followi
    - This is used for Brandfetch brand detection (colors, logos) — must be a real company name
 
 3. **projectName**: The project name in PascalCase (no spaces).
-   - MUST include the company/brand name as a prefix
-   - Format: {CompanyName}{UseCase} - e.g., "ToyotaServiceBot", "TravelersClaimsFNOL"
-   - Remove spaces from company names: "Home Depot" → "HomeDepot", "Travelers Insurance" → "Travelers"
-   - Keep it concise - use shortened company names if long (e.g., "TravelersInsurance" → "Travelers")
-   - Add a descriptor like "Bot", "MVP", "FNOL", "Support", "Assistant"
-   - Examples: "ToyotaSupportBot", "HomeDepotProductBot", "DeltaFlightAssist", "WeWorkHelpDesk"
+   - Should describe what the bot does
+   - Examples: "ClaimsFNOL", "CustomerSupport", "LeadCapture", "BillingAssist", "TechSupport"
+   - Combine the use case with a descriptor like "MVP", "Bot", "Assistant", "Portal"
 
 4. **projectType**: One of: "claims", "support", "sales", "faq", "survey", "custom"
    - claims: Insurance claims, FNOL, incident reporting
@@ -1439,7 +1336,7 @@ Input: "need a bot for travelers insurance to handle water damage claims"
 Output: {
   "clientName": "CX",
   "targetCompany": "Travelers Insurance",
-  "projectName": "TravelersClaimsFNOL",
+  "projectName": "WaterDamageFNOL",
   "projectType": "claims",
   "description": "A chatbot for Travelers Insurance to handle water damage claims. The bot will collect incident details, capture photos/documentation, and route claims appropriately."
 }
@@ -1448,34 +1345,16 @@ Input: "help desk chatbot for WeWork"
 Output: {
   "clientName": "CX",
   "targetCompany": "WeWork",
-  "projectName": "WeWorkHelpDesk",
+  "projectName": "HelpDeskBot",
   "projectType": "support",
   "description": "A help desk chatbot for WeWork to assist users with technical support requests. Will handle common troubleshooting, ticket creation, and escalation to live agents."
-}
-
-Input: "Toyota customer service bot"
-Output: {
-  "clientName": "CX",
-  "targetCompany": "Toyota",
-  "projectName": "ToyotaSupportBot",
-  "projectType": "support",
-  "description": "A customer service chatbot for Toyota to assist customers with vehicle inquiries, service scheduling, and general support."
-}
-
-Input: "Home Depot product recommendation"
-Output: {
-  "clientName": "CX",
-  "targetCompany": "Home Depot",
-  "projectName": "HomeDepotProductBot",
-  "projectType": "sales",
-  "description": "A product recommendation chatbot for Home Depot to help customers find the right products for their home improvement projects."
 }
 
 Input: "I want to collect leads for my roofing company"
 Output: {
   "clientName": "CX",
   "targetCompany": "Roofing Company",
-  "projectName": "RoofingLeadBot",
+  "projectName": "LeadCaptureMVP",
   "projectType": "sales",
   "description": "A lead generation chatbot for a roofing company. Collects contact information, project details (roof type, damage assessment), and schedules consultations."
 }
@@ -1484,7 +1363,7 @@ Input: "something to answer questions about our products"
 Output: {
   "clientName": "CX",
   "targetCompany": "Product Company",
-  "projectName": "ProductFAQBot",
+  "projectName": "ProductFAQ",
   "projectType": "faq",
   "description": "A FAQ chatbot to answer product-related questions. Will provide product information, specifications, pricing, and availability details."
 }
@@ -1562,181 +1441,6 @@ ALWAYS respond with valid JSON only. No markdown, no explanation - just the JSON
               console.error('[AI Analyze] Error:', e);
               res.statusCode = 500;
               res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-      }
-    },
-    // AI Edit middleware - for live editing bot CSVs via natural language
-    {
-      name: 'ai-edit-middleware',
-      async configureServer(server) {
-        server.middlewares.use('/api/ai/generate', async (req, res, next) => {
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          if (req.method !== 'POST') {
-            next();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { type, prompt, currentCsv, currentScripts } = JSON.parse(body);
-              
-              // Only handle 'edit' type requests here
-              if (type !== 'edit') {
-                next();
-                return;
-              }
-              
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              
-              if (!apiKey || apiKey === 'your-api-key-here') {
-                console.log('[AI Edit] No API key configured');
-                res.statusCode = 503;
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ 
-                  success: false,
-                  error: 'ANTHROPIC_API_KEY not configured'
-                }));
-                return;
-              }
-              
-              console.log('[AI Edit] Processing edit request');
-              console.log('[AI Edit] Prompt:', prompt?.substring(0, 200) + '...');
-              
-              const systemPrompt = `You are an expert Pypestream bot editor. Your job is to modify bot CSV files based on natural language instructions.
-
-## CSV FORMAT
-The bot CSV has these columns (in order):
-Node Number, Node Type, Node Name, Intent, Entity Type, Entity, NLU Disabled?, Next Nodes, Message, Rich Asset Type, Rich Asset Content, Answer Required?, Behaviors, Command, Description, Output, Node Input, Parameter Input, Decision Variable, What Next?, Node Tags, Skill Tag, Variable, Platform Flag, Flows, CSS Classname
-
-## NODE TYPES
-- D = Decision Node (user-facing messages, buttons, inputs)
-- A = Action Node (backend scripts, API calls, variable assignment)
-
-## EDITING RULES
-1. Make MINIMAL changes to fulfill the request
-2. PRESERVE existing node numbers - don't renumber unless absolutely necessary
-3. When adding new nodes, use the next available number in the appropriate range
-4. Keep all formatting consistent with the original CSV
-5. Maintain all existing rich asset formats (buttons, listpicker, etc.)
-
-## RESPONSE FORMAT
-You MUST respond with a JSON object containing:
-{
-  "csv": "the complete modified CSV content",
-  "summary": "brief description of changes made",
-  "affectedNodes": [array of modified node numbers],
-  "scripts": []
-}
-
-RESPOND WITH JSON ONLY. No markdown, no explanation.`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-sonnet-4-20250514',
-                  max_tokens: 16000,
-                  messages: [
-                    { 
-                      role: 'user', 
-                      content: `${prompt}
-
-## CURRENT CSV
-\`\`\`csv
-${currentCsv}
-\`\`\`
-
-## CURRENT SCRIPTS (${currentScripts?.length || 0})
-${currentScripts?.map((s: any) => `- ${s.name}`).join('\n') || 'None'}
-
-Apply the requested changes and return the complete modified CSV.` 
-                    }
-                  ],
-                  system: systemPrompt
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                console.error('[AI Edit] Claude API error:', response.status, errorText);
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ 
-                  success: false,
-                  error: `Claude API error: ${response.status}`
-                }));
-                return;
-              }
-              
-              const result = await response.json();
-              const content = result.content?.[0]?.text || '';
-              
-              console.log('[AI Edit] Response received, length:', content.length);
-              
-              let editResult;
-              try {
-                let jsonStr = content.trim();
-                const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-                if (jsonMatch) {
-                  jsonStr = jsonMatch[1].trim();
-                }
-                const rawJsonMatch = content.match(/\{[\s\S]*\}/);
-                if (rawJsonMatch) {
-                  jsonStr = rawJsonMatch[0];
-                }
-                
-                editResult = JSON.parse(jsonStr);
-                editResult.success = true;
-                
-                console.log('[AI Edit] Changes:', editResult.summary);
-                console.log('[AI Edit] Affected nodes:', editResult.affectedNodes);
-                
-              } catch (parseError) {
-                console.error('[AI Edit] Failed to parse response:', parseError);
-                const csvMatch = content.match(/```csv\s*([\s\S]*?)```/);
-                if (csvMatch) {
-                  editResult = {
-                    success: true,
-                    csv: csvMatch[1].trim(),
-                    summary: 'Changes applied',
-                    affectedNodes: [],
-                    scripts: currentScripts
-                  };
-                } else {
-                  editResult = {
-                    success: false,
-                    error: 'Failed to parse AI response'
-                  };
-                }
-              }
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify(editResult));
-              
-            } catch (e: any) {
-              console.error('[AI Edit] Error:', e);
-              res.statusCode = 500;
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ 
-                success: false, 
-                error: e.message || String(e) 
-              }));
             }
           });
         });
@@ -2072,30 +1776,27 @@ Apply the requested changes and return the complete modified CSV.`
         let cachedActionNodes: string | null = null;
         
         // Load context from Knowledge-Base and Official-Action-Nodes
-        // OPTIMIZED: Only load essential files to reduce prompt size and speed up generation
         const loadContext = () => {
           if (cachedContext) return { context: cachedContext, actionNodes: cachedActionNodes };
           
           const workspaceRoot = resolve(__dirname, '..');
           
           try {
-            // OPTIMIZED: Only load action nodes reference (system prompt has CSV rules)
-            // This reduces context from ~56K to ~20K chars, speeding up Claude response
+            // Load Knowledge-Base files
             const knowledgeBasePath = resolve(workspaceRoot, 'Knowledge-Base');
             const kbFiles = [
-              // Skip CSV-Column-Reference - already in system prompt
-              // Skip Rich-Assets-Reference - already in system prompt
-              '04-Action-Scripts-Reference.md', // Keep - action script examples
-              // Skip UX-Best-Practices - already in system prompt
-              '08-Official-Action-Nodes.md',    // Keep - list of available scripts
+              '01-CSV-Column-Reference.md',
+              '03-Rich-Assets-Reference.md',
+              '04-Action-Scripts-Reference.md',
+              '06-UX-Best-Practices.md',
+              '08-Official-Action-Nodes.md',
             ];
             
             let context = '';
             for (const file of kbFiles) {
               try {
                 const content = readFileSync(resolve(knowledgeBasePath, file), 'utf-8');
-                // Limit each file to first 8000 chars to keep total context manageable
-                context += `\n\n## ${file.replace('.md', '')}\n${content.substring(0, 8000)}`;
+                context += `\n\n## ${file.replace('.md', '')}\n${content}`;
               } catch (e) {
                 console.log(`[AI Gen] Could not load ${file}`);
               }
@@ -2197,13 +1898,10 @@ Apply the requested changes and return the complete modified CSV.`
               // Load context
               const { context, actionNodes } = loadContext();
               
-              // Skip documentation searches - the system prompt already contains all rules
-              // This saves 3-5 seconds of latency per generation
+              // Query Pypestream docs for authoritative CSV format documentation
               let docsContext = '';
-              const SKIP_DOC_SEARCHES = true; // Set to false to enable doc searches
-              
               const queryDocs = (server as any).queryPypestreamDocs;
-              if (queryDocs && !SKIP_DOC_SEARCHES) {
+              if (queryDocs) {
                 try {
                   console.log('[AI Gen] Fetching Pypestream documentation...');
                   
@@ -2232,8 +1930,6 @@ ${datepickerDocs || 'Not available'}
                 } catch (e) {
                   console.log('[AI Gen] Could not fetch docs:', e);
                 }
-              } else if (SKIP_DOC_SEARCHES) {
-                console.log('[AI Gen] Skipping doc searches for faster generation');
               }
               
               // Build the comprehensive system prompt for Pypestream CSV generation
@@ -2358,14 +2054,11 @@ Here: 5 commas, then "104" (Next Nodes), then 18 more commas for remaining empty
 -500,A,HandleBotError,,,,,,,,,,,HandleBotError,Catches exceptions,error_type,,"{""save_error_to"":""PLATFORM_ERROR""}",error_type,bot_error~99990|bot_timeout~99990|other~99990,,,PLATFORM_ERROR,,,
 666,D,EndChat,,,,,,Thank you for using our service. Goodbye!,,,,,,,,,,,,,,,,,,
 999,D,Agent Transfer,,,,,,,,,,xfer_to_agent,,,,,,,,,,,,,,
-1800,A,OutOfScope → Try GenAI,out_of_scope,,,,,,,,,,GenAIFallback,AI attempts to understand before fallback,result,,"{""question"":""{LAST_USER_MESSAGE}"",""context"":""{LAST_TOPIC}"",""entity"":""{LAST_ENTITY}""}",result,understood~1802|route_flow~1803|not_understood~1804|error~1804,,,AI_RESPONSE,,,
-1802,D,GenAIResponse → AI Answer,,,,,,{AI_RESPONSE},quick_reply,"{""type"":""static"",""options"":[{""label"":""Back to Menu"",""dest"":200},{""label"":""All Done"",""dest"":666},{""label"":""Talk to Agent"",""dest"":999}]}",1,,,AI-generated response,,,,,,,,,,
-1803,A,RouteDetectedIntent,,,,,,,,,,,SysMultiMatchRouting,Route to detected flow,route_to,,"{""global_vars"":""DETECTED_INTENT"",""input_vars"":""product,details,schedule,pricing,support""}",route_to,product~300|details~320|schedule~400|pricing~500|support~600|error~1804,,,,,
-1804,D,FallbackFail → Human Help,,,,,,I want to make sure I help you correctly. Let me connect you with someone who can assist.,button,Talk to Agent~999|Start Over~1,1,disable_input,,,,,,,,,,,,
+1800,D,OutOfScope,out_of_scope,,,,,I'm not sure I understood that.,button,Start Over~1|Talk to Agent~999,1,disable_input,,,,,,,,,,,,
 99990,D,Error Message,,,,,,Oops! Something went wrong. Let me help you get back on track.,button,Start Over~1|Talk to Agent~999,1,disable_input,,,,,,,,,,,,
 \`\`\`
 
-## REQUIRED STARTUP FLOW (NODES 1-105) - INCLUDE EXACTLY AS SHOWN!
+## REQUIRED STARTUP FLOW (NODES 1-104) - INCLUDE EXACTLY AS SHOWN!
 
 \`\`\`csv
 1,A,SysShowMetadata,,,,,,,,,,,SysShowMetadata,Gets session info,success,,"{""passthrough_mapping"":{},""assign_metadata_vars"":{""chat_id"":""CHATID"",""session_id"":""SESSION_ID""}}",success,true~10|error~99990,,,CHATID,,,
@@ -2374,8 +2067,7 @@ Here: 5 commas, then "104" (Next Nodes), then 18 more commas for remaining empty
 101,A,SetVar Android,,,,,,,,,,,SysAssignVariable,Sets platform to Android,success,,"{""set"":{""USER_PLATFORM"":""Android""}}",success,true~104|error~99990,,,USER_PLATFORM,,,
 102,A,SetVar Desktop,,,,,,,,,,,SysAssignVariable,Sets platform to Desktop,success,,"{""set"":{""USER_PLATFORM"":""Desktop""}}",success,true~104|error~99990,,,USER_PLATFORM,,,
 103,D,Platform Fallback,,,,,104,,,,,,,,,,,,,,,,,,
-104,A,SysSetEnv,,,,,,,,,,,SysSetEnv,Sets environment,success,,"{""set_env_as"":""ENV""}",success,true~105|error~99990,,,ENV,,,
-105,A,InitContext → Set Context Vars,,,,,,,,,,,SysAssignVariable,Initialize conversation context,success,,"{""set"":{""LAST_TOPIC"":"""",""LAST_ENTITY"":"""",""CONVERSATION_CONTEXT"":"""",""CONTEXT_FLOW"":""""}}",success,true~200|error~99990,,,LAST_TOPIC,,,
+104,A,SysSetEnv,,,,,,,,,,,SysSetEnv,Sets environment,success,,"{""set_env_as"":""ENV""}",success,true~200|error~99990,,,ENV,,,
 \`\`\`
 
 ## REQUIRED MAIN MENU STRUCTURE (NODES 200-210) — NLU-FIRST!
@@ -2398,33 +2090,21 @@ An intent routing action node (210) maps typed input to flows.
 - Unmatched input falls through to 1800 (Out of Scope)
 - Replace feature names with project-specific topics
 
-**CRITICAL — FORBIDDEN OPTIONS ON MAIN MENU (NODE 200):**
-- ❌ "Back to Menu" — you're already at the menu!
-- ❌ "Main Menu" — redundant!
-- ❌ "Start Over" — only for error recovery!
-- ❌ "Anything else?" — that's for AFTER completing a task!
-
-**WHEN TO USE RETURN MENU (NODE 201):**
-- ✅ After user completes a feature flow (got info, placed order, etc.)
-- ✅ After showing final results or confirmation
-- ❌ NEVER from Main Menu directly!
-- ❌ NEVER as first response to user input!
-
 ## COMPLETE STARTER TEMPLATE STRUCTURE:
 
 Your generated bot MUST follow this structure:
 \`\`\`
 Nodes -500: Error handler
-Nodes 1-105: Startup flow with context initialization (copy exactly from above)
+Nodes 1-104: Startup flow (copy exactly from above)
 Node 200: Main Menu — NLU + quick_reply hints (NOT buttons)
 Node 201: Return Menu — conversational "anything else?"
-Node 210: Intent routing (SysMultiMatchRouting with synonyms)
-Nodes 300-399: First feature flow (NLU input + rich assets + context updates)
-Nodes 400-499: Second feature flow (NLU input + rich assets + context updates)
+Node 210: Intent routing (SysMultiMatchRouting)
+Nodes 300-399: First feature flow (NLU input + rich assets)
+Nodes 400-499: Second feature flow (NLU input + rich assets)
 Nodes 500-599: Third feature flow (if needed)
 Node 666: End Chat goodbye message
 Node 999: Live Agent transfer
-Nodes 1800-1804: GenAI fallback chain (AI understanding before human escalation)
+Node 1800: Out of scope / NLU fallback
 Nodes 99990-99991: Error handling and recovery
 \`\`\`
 
@@ -2435,29 +2115,6 @@ Nodes 99990-99991: Error handling and recovery
 - Use DATEPICKER/TIMEPICKER for dates/times (never free text)
 - Use BUTTONS only for yes/no confirmations and error recovery
 - Every flow ends at 201 (Return Menu) or 666 (End Chat)
-
-## WRONG vs RIGHT FLOW EXAMPLES (CRITICAL!)
-
-**❌ WRONG — Main menu has "Back to Menu" and skips to return menu:**
-\`\`\`
-User opens chat
-Bot: "Welcome! What do you need?" [Product Help] [Back to Menu] ← WRONG!
-User clicks: "Product Help"
-Bot: "Is there anything else I can help with?" ← WRONG! Did nothing yet!
-\`\`\`
-
-**✅ RIGHT — Main menu has features, flows DO something before returning:**
-\`\`\`
-User opens chat
-Bot: "Welcome! What do you need?" [Product Help] [Orders] [Contact] ← Correct!
-User clicks: "Product Help"
-Bot: "What products are you looking for?" [Crunchy] [Flamin Hot] [Puffs]
-User clicks: "Flamin Hot"
-Bot: "Here's info about Flamin' Hot Cheetos: [details shown]"
-Bot: "Is there anything else I can help with?" [Yes] [No thanks] ← NOW it's appropriate!
-\`\`\`
-
-**The pattern: Welcome → Feature → DO THE THING → Return Menu**
 
 ## EXAMPLE FEATURE FLOW — NLU + RICH ASSETS (300-399):
 
@@ -2570,7 +2227,7 @@ Every generated bot MUST use a DIVERSE mix of rich asset types:
 - **Quick Replies (quick_reply):** For short inline choices (2-4 options) that feel conversational.
 - **Datepickers (datepicker):** ALWAYS use for date input. Never ask users to type dates.
 - **Timepickers (timepicker):** ALWAYS use for time input. Never ask users to type times.
-- **Carousels (carousel):** AVOID unless you have REAL image URLs. Use listpickers instead for product selection.
+- **Carousels (carousel):** For browsing products, plans, or cards with images.
 - **Webviews (webview):** For forms, maps, complex input, terms & conditions.
 - **File Upload (file_upload):** For document/image collection.
 - **Free Text + NLU:** For names, emails, descriptions, questions, ZIP codes, phone numbers — anything the user would naturally type.
@@ -2619,27 +2276,27 @@ When offering 3+ options that need descriptions or images:
 500,D,PickDate,,,,,,When would you like to schedule your appointment?,datepicker,"{""type"":""static"",""message"":""Select a date""}",1,disable_input,,,,,,,,,,,,
 \`\`\`
 
-**Pattern 6: Listpicker for product recommendations (PREFERRED for products!)**
-When the bot needs to show products, recommendations, or options — use LISTPICKERS with descriptions.
-Listpickers work reliably and don't require images.
+**Pattern 6: Carousel for product recommendations and comparisons (PREFERRED for products!)**
+When the bot needs to show products, recommendations, comparisons, or any visual options — ALWAYS use carousels with images.
+Carousels let users swipe through cards with product images, titles, descriptions, and action buttons.
 
-**Product recommendation listpicker:**
+**Product recommendation carousel:**
 \`\`\`csv
-600,D,BrowseProducts,,,,,,Based on what you've told me, here are my top picks:,listpicker,"{""type"":""static"",""options"":[{""label"":""Product A — Best Seller"",""description"":""$299 • Rated 4.8/5 stars • Most features"",""dest"":""610""},{""label"":""Product B — Most Popular"",""description"":""$249 • Rated 4.6/5 stars • Best balance"",""dest"":""620""},{""label"":""Product C — Best Value"",""description"":""$199 • Rated 4.5/5 stars • Great starter"",""dest"":""630""}]}",1,disable_input,,,,,,,,,,,,
+600,D,BrowseProducts,,,,,,Based on what you've told me, here are my top picks:,carousel,"{""type"":""static"",""cards"":[{""title"":""Product A"",""description"":""Best seller — $299\\nRated 4.8/5 stars"",""image"":""https://example.com/product-a.jpg"",""buttons"":[{""label"":""Learn More"",""dest"":610},{""label"":""Compare"",""dest"":650}]},{""title"":""Product B"",""description"":""Most popular — $249\\nRated 4.6/5 stars"",""image"":""https://example.com/product-b.jpg"",""buttons"":[{""label"":""Learn More"",""dest"":620},{""label"":""Compare"",""dest"":650}]},{""title"":""Product C"",""description"":""Best value — $199\\nRated 4.5/5 stars"",""image"":""https://example.com/product-c.jpg"",""buttons"":[{""label"":""Learn More"",""dest"":630},{""label"":""Compare"",""dest"":650}]}]}",1,disable_input,,,,,,,,,,,,
 \`\`\`
 
-**Plan/tier selection listpicker:**
+**Product comparison carousel (side-by-side):**
 \`\`\`csv
-650,D,ComparePlans,,,,,,Which plan works best for you?,listpicker,"{""type"":""static"",""options"":[{""label"":""Basic Plan"",""description"":""$9/mo • 1 user • Core features"",""dest"":""660""},{""label"":""Pro Plan"",""description"":""$29/mo • 5 users • Advanced features"",""dest"":""670""},{""label"":""Enterprise"",""description"":""Custom pricing • Unlimited users • Full suite"",""dest"":""680""}]}",1,disable_input,,,,,,,,,,,,
+650,D,CompareProducts,,,,,,Here's how they stack up:,carousel,"{""type"":""static"",""cards"":[{""title"":""Product A vs Product B"",""description"":""A: More features, higher price\\nB: Better value, lighter\\n\\nBoth have 5-year warranty"",""image"":""https://example.com/compare-ab.jpg"",""buttons"":[{""label"":""Pick A"",""dest"":610},{""label"":""Pick B"",""dest"":620}]},{""title"":""Specs at a Glance"",""description"":""A: 64GB, 6.1in, Pro camera\\nB: 128GB, 6.4in, Standard\\nC: 64GB, 5.8in, Compact"",""image"":""https://example.com/specs.jpg"",""buttons"":[{""label"":""See All Models"",""dest"":600}]}]}",1,disable_input,,,,,,,,,,,,
 \`\`\`
 
-**WHEN TO USE LISTPICKERS (prefer over buttons for 3+ options):**
-- Product recommendations (use description for details)
+**WHEN TO USE CAROUSELS (always prefer over buttons/listpickers for these):**
+- Product recommendations (show images, prices, ratings)
+- Product comparisons (side-by-side cards)
 - Plan/tier selection (Basic vs Pro vs Enterprise)
-- Category selection with context
-- Any selection with more than 2-3 options
-
-**NOTE: AVOID CAROUSELS** - They require real image URLs that must be publicly accessible. Use listpickers instead.
+- Location results (show addresses with maps)
+- Service options with visual context (before/after photos, icons)
+- Any selection where IMAGES add value
 
 **Carousel card structure:**
 - title: Product/option name (required)
@@ -2721,104 +2378,14 @@ Add flow tracking for analytics:
 - \`feature_name_entry\` when entering a feature
 - \`feature_name_exit\` when completing a feature
 
-## CONTEXT TRACKING AND INTELLIGENT NLU (REQUIRED!)
-
-### Why Context Tracking Matters:
-Without context, bots fail on simple follow-up questions like:
-- User: "Tell me about Crunchy Cheetos" → Bot shows product info
-- User: "What ingredients are in them" → Bot fails: "I don't understand"
-This happens because the bot doesn't know "them" refers to Crunchy Cheetos.
-
-### REQUIRED: Context Variables (Initialize in Startup Flow)
-After node 104 (SysSetEnv), add context initialization:
-\`\`\`csv
-105,A,InitContext → Set Context Vars,,,,,,,,,,,SysAssignVariable,Initialize conversation context,success,,"{""set"":{""LAST_TOPIC"":"""",""LAST_ENTITY"":"""",""CONVERSATION_CONTEXT"":"""",""CONTEXT_FLOW"":""""}}",success,true~200|error~99990,,,LAST_TOPIC,,,
-\`\`\`
-
-### REQUIRED: Update Context After Each Topic/Selection
-When user selects a product, topic, or completes an action, UPDATE the context:
-\`\`\`csv
-351,A,UpdateContext → Product Selected,,,,,,,,,,,SysAssignVariable,Save current topic context,success,,"{""set"":{""LAST_TOPIC"":""product_info"",""LAST_ENTITY"":""{SELECTED_PRODUCT}"",""CONVERSATION_CONTEXT"":""browsing_products""}}",success,true~352|error~352,,,LAST_ENTITY,,,
-\`\`\`
-
-### Enhanced Intent Routing with Synonyms
-Expand input_vars in SysMultiMatchRouting to include:
-1. Primary keywords for each feature
-2. Synonyms and variations
-3. Common follow-up keywords (more, details, ingredients, tell me about, it, them, that)
-
-**Enhanced intent routing example:**
-\`\`\`csv
-210,A,IntentRouting → Enhanced,,,,,,,,,,,SysMultiMatchRouting,Routes with synonym coverage,next_node,,"{""global_vars"":""LAST_USER_MESSAGE"",""input_vars"":""product,products,items,browse,ingredients,nutrition,details,more,info,about,tell_me,schedule,book,appointment,pricing,cost,price,support,help,agent,contact""}",next_node,product~300|products~300|items~300|browse~300|ingredients~310|nutrition~310|details~320|more~320|info~320|about~320|tell_me~320|schedule~400|book~400|appointment~400|pricing~500|cost~500|price~500|support~600|help~200|agent~999|contact~999|error~1800,,,,,
-\`\`\`
-
-### REQUIRED: GenAI Fallback Chain (Nodes 1801-1804)
-Instead of immediately showing "I don't understand", route to AI fallback:
-
-**Update node 1800 to attempt AI understanding first:**
-\`\`\`csv
-1800,A,OutOfScope → Try GenAI,out_of_scope,,,,,,,,,,GenAIFallback,Attempts AI understanding before fallback,result,,"{""question"":""{LAST_USER_MESSAGE}"",""context"":""{LAST_TOPIC}"",""entity"":""{LAST_ENTITY}"",""conversation_context"":""{CONVERSATION_CONTEXT}""}",result,understood~1802|route_flow~1803|not_understood~1804|error~1804,,,AI_RESPONSE,,,
-1801,A,RouteToContextFlow,,,,,,,,,,,SysMultiMatchRouting,Routes based on detected intent,flow_match,,"{""global_vars"":""DETECTED_INTENT"",""input_vars"":""product_info,ingredients,nutrition,details,schedule,pricing,support""}",flow_match,product_info~300|ingredients~310|nutrition~310|details~320|schedule~400|pricing~500|support~600|error~1804,,,,,
-1802,D,GenAIResponse → AI Answer,,,,,,{AI_RESPONSE},quick_reply,"{""type"":""static"",""options"":[{""label"":""Back to Menu"",""dest"":200},{""label"":""All Done"",""dest"":666},{""label"":""Talk to Agent"",""dest"":999}]}",1,,,AI-generated contextual response,,,,,,,,,,
-1803,A,ProcessDetectedIntent,,,,,,,,,,,SysMultiMatchRouting,Process detected intent from AI,route_to,,"{""global_vars"":""DETECTED_INTENT"",""input_vars"":""product,ingredients,details,schedule,pricing,support,agent""}",route_to,product~300|ingredients~310|details~320|schedule~400|pricing~500|support~600|agent~999|error~1804,,,,,
-1804,D,FallbackFail → Human Help,,,,,,I want to make sure I help you correctly. Let me connect you with someone who can assist.,button,Talk to Agent~999|Start Over~1,1,disable_input,,,Graceful escalation to human,,,,,,,,,,,
-\`\`\`
-
-### Context-Aware Response Patterns
-When generating responses that mention products/topics, ALWAYS update context:
-
-**Pattern: Product Selection with Context Update**
-\`\`\`csv
-350,D,ShowProduct → Display Info,,,,,,{PRODUCT_DESCRIPTION},quick_reply,"{""type"":""static"",""options"":[{""label"":""Ingredients"",""dest"":360},{""label"":""Nutrition"",""dest"":370},{""label"":""Buy Now"",""dest"":380}]}",1,,,Display product information,,,,,,,,,,
-351,A,UpdateProductContext,,,,,,,,,,,SysAssignVariable,Save product context for follow-ups,success,,"{""set"":{""LAST_TOPIC"":""product"",""LAST_ENTITY"":""{PRODUCT_NAME}"",""CONVERSATION_CONTEXT"":""product_details""}}",success,true~200|error~200,,,LAST_ENTITY,,,
-\`\`\`
-
-### Handling Pronouns and References (Critical!)
-These follow-up keywords should route to context-aware handling:
-- "it", "them", "that", "this" → Use LAST_ENTITY
-- "more", "details", "tell me about" → Continue current CONVERSATION_CONTEXT
-- "ingredients", "nutrition", "specs" → Detail query about LAST_ENTITY
-
-**Contextual keyword routing:**
-\`\`\`csv
-320,A,ContextualDetailRouter,,,,,,,,,,,SysMultiMatchRouting,Routes detail queries using context,detail_type,,"{""global_vars"":""LAST_USER_MESSAGE"",""input_vars"":""ingredients,nutrition,specs,details,more,about_it,about_them""}",detail_type,ingredients~360|nutrition~370|specs~380|details~390|more~390|about_it~390|about_them~390|error~1800,,,,,
-\`\`\`
-
-### GenAIFallback Script Behavior
-The GenAIFallback action node (Official-Action-Nodes/GenAIFallback.py) will:
-1. Take user message + context variables
-2. Use LLM to understand intent and resolve pronouns
-3. Return one of: understood (with AI_RESPONSE), route_flow (with DETECTED_INTENT), or not_understood
-4. Set output variables: AI_RESPONSE, DETECTED_INTENT, CONFIDENCE
-
-### Context Best Practices:
-1. ALWAYS initialize context vars in startup (node 105)
-2. UPDATE context after every topic/product selection
-3. EXPAND intent routing keywords to include synonyms
-4. USE GenAI fallback before showing "I don't understand"
-5. INCLUDE context variables in GenAIFallback calls
-6. ROUTE contextual queries (ingredients, details) to LAST_ENTITY handlers
-
 ## CRITICAL RULES
 1. EVERY ROW MUST HAVE EXACTLY 25 COMMAS (26 columns)!
 2. For Decision nodes: Message goes in column 9 (5 commas after Node Name if cols 4-8 empty)
 3. For Action nodes: Command goes in column 14 (10 commas after Node Name if cols 4-13 empty)
 4. NEVER use * or = in message text (reserved characters)
 5. All JSON in Parameter Input and Rich Asset Content must be valid (escape quotes as "")
-6. **DECISION NODES (type D) - NEVER have these columns (MUST BE EMPTY!):**
-   - Command (col 14)
-   - Description (col 15) 
-   - Output (col 16)
-   - Parameter Input (col 18)
-   - **Decision Variable (col 19) - WILL CAUSE VALIDATION ERROR IF SET ON DECISION NODE!**
-   - **What Next? (col 20) - WILL CAUSE VALIDATION ERROR IF SET ON DECISION NODE!**
-7. **ACTION NODES (type A) - NEVER have these columns (MUST BE EMPTY!):**
-   - Next Nodes (col 8)
-   - Message (col 9)
-   - Rich Asset Type (col 10)
-   - Rich Asset Content (col 11)
-   - Answer Required? (col 12)
-   - Behaviors (col 13)
+6. Decision nodes: Leave columns 14-16, 18-20 BLANK (Command, Description, Output, Parameter Input, Decision Variable, What Next?)
+7. Action nodes: Leave columns 8-13 BLANK (Next Nodes, Message, Rich Asset Type, Rich Asset Content, Answer Required?, Behaviors)
 8. **NLU Disabled?=1 FORBIDDEN with buttons/listpicker that have multiple destinations!**
    - NLU Disabled?=1 means node can only have ONE child (Next Nodes + button dests combined!)
    - If buttons route to different nodes (dest: 220, 230, 240), NLU Disabled MUST be empty!
@@ -2828,44 +2395,6 @@ The GenAIFallback action node (Official-Action-Nodes/GenAIFallback.py) will:
 11. Use {VARIABLE_NAME} for variables in messages
 12. **ALWAYS route back to Return Menu (201) after completing any action - NO DEAD ENDS!**
 13. **Main Menu (200) and Return Menu (201) are REQUIRED nodes!**
-
-## VALIDATION ERROR PREVENTION - READ THIS!
-**"proposed dir_field is not an element of the proposed payload" ERROR:**
-- This error ALWAYS happens when a Decision node (type D) has Decision Variable or What Next set
-- Decision Variable and What Next are ONLY for Action nodes (type A)!
-- Node 1800 (OutOfScope/GenAI) MUST be type A with command GenAIFallback - NOT type D!
-- If you put Decision Variable on a type D node, validation WILL fail!
-
-## FLOW LOGIC RULES (CRITICAL - Follow these exactly!)
-
-### Rule 1: Main Menu (200) must NOT have "Back to Menu" option!
-- WRONG: Welcome message with "Back to Menu" button — you're already at the menu!
-- RIGHT: Main Menu offers feature options: Product Help, Orders, Contact, etc.
-
-### Rule 2: Return Menu (201) is ONLY for AFTER completing a task!
-- WRONG: Going from Welcome → Return Menu immediately
-- WRONG: Any path that reaches "Is there anything else?" without doing something first
-- RIGHT: Complete flow → "Is there anything else?" → Yes→200 / No→666
-
-### Rule 3: Correct flow structure:
-\`\`\`
-Welcome (200) → User picks feature → Feature flow (300-999)
-                                          ↓
-                               [Complete the task]
-                                          ↓
-                               Return Menu (201): "Anything else?"
-                                    ↓              ↓
-                                Yes→200        No→666
-\`\`\`
-
-### Rule 4: NEVER include these options on Main Menu/Welcome:
-- "Back to Menu" (you're already there!)
-- "Main Menu" (redundant!)
-- "Start Over" (only for error recovery!)
-
-### Rule 5: Feature flows must DO SOMETHING before returning!
-- WRONG: Product Help → immediately "Is there anything else?"
-- RIGHT: Product Help → Show products → User selects → Show details → "Anything else?"
 
 ## COMMON MISTAKES TO AVOID (Bot Manager will reject these!)
 
@@ -2877,16 +2406,12 @@ Welcome (200) → User picks feature → Feature flow (300-999)
 
 ### 2. DECISION VARIABLE MISMATCH - CRITICAL!
 - Error: "proposed dir_field is not an element of the proposed payload"
-- **CAUSE 1 (MOST COMMON): You put Decision Variable on a DECISION NODE (type D)!**
-  - Decision Variable is ONLY for Action nodes (type A)!
-  - Decision nodes (type D) MUST have Decision Variable column EMPTY!
-  - If type D has decVar or whatNext, validation WILL fail!
-- CAUSE 2: Decision Variable doesn't match what the script outputs
-  - WRONG: Decision Variable is empty but What Next? has routing (for Action nodes)
-  - WRONG: Decision Variable is "availability" but script outputs "success"
-  - RIGHT: Decision Variable MUST be a key that the script's Output variable contains
-  - For SysAssignVariable: Decision Variable = "success", What Next? = "true~100|false~200|error~99990"
-  - For custom scripts: Decision Variable must match a key in the script's return JSON
+- This means: Decision Variable doesn't match what the script outputs
+- WRONG: Decision Variable is empty but What Next? has routing
+- WRONG: Decision Variable is "availability" but script outputs "success"
+- RIGHT: Decision Variable MUST be a key that the script's Output variable contains
+- For SysAssignVariable: Decision Variable = "success", What Next? = "true~100|false~200|error~99990"
+- For custom scripts: Decision Variable must match a key in the script's return JSON
 
 ### 3. DATEPICKER/TIMEPICKER FORMAT - CRITICAL!
 - Error: "'datepicker' is not one of ['static']" or "'message' is a required property"
@@ -3321,106 +2846,60 @@ Return ONLY the JSON response with the complete CSV.`;
               console.log(`[AI Gen] Calling ${useGoogle ? 'Google Gemini' : 'Anthropic Claude'} API...`);
               
               // Helper function to call AI API with retry logic for rate limits
-              const callAIWithRetry = async (maxRetries = 3): Promise<any> => {
+              const callAIWithRetry = async (maxRetries = 4): Promise<any> => {
                 let lastError: any;
-                
-                // Use shorter timeout with fallback strategy
-                // Attempt 1: Claude Sonnet (90s) - best quality, 16K tokens
-                // Attempt 2: Claude Haiku (60s) - faster, 8K tokens max
-                // Attempt 3: Gemini Flash (60s) - fastest fallback, 32K tokens
-                const timeoutByAttempt = [90000, 60000, 60000]; // 90s, 60s, 60s
-                const modelByAttempt = ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022', 'gemini-flash'];
-                const maxTokensByAttempt = [16000, 8192, 32000]; // Model-specific limits
                 
                 for (let attempt = 1; attempt <= maxRetries; attempt++) {
                   let response;
-                  const currentTimeout = timeoutByAttempt[attempt - 1] || 60000;
-                  const currentModel = modelByAttempt[attempt - 1] || 'gemini-flash';
-                  const currentMaxTokens = maxTokensByAttempt[attempt - 1] || 8192;
-                  const useGeminiForAttempt = currentModel === 'gemini-flash';
                   
-                  // Create AbortController for timeout
-                  const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), currentTimeout);
-                  
-                  console.log(`[AI Gen] Attempt ${attempt}/${maxRetries}: Using ${currentModel} (timeout: ${currentTimeout/1000}s)`);
-                  
-                  try {
-                    if (useGoogle || useGeminiForAttempt) {
-                      // Google Gemini API - fast fallback
-                      const geminiKey = useGeminiForAttempt ? process.env.GEMINI_API_KEY : effectiveApiKey;
-                      if (!geminiKey && useGeminiForAttempt) {
-                        console.log('[AI Gen] No GEMINI_API_KEY in .env for fallback, skipping Gemini');
-                        continue;
-                      }
-                      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey || effectiveApiKey}`, {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          contents: [{
-                            parts: [{
-                              text: `${systemPrompt}\n\n${userPrompt}`
-                            }]
-                          }],
-                          generationConfig: {
-                            maxOutputTokens: 32000,
-                            temperature: 0.7
-                          }
-                        }),
-                        signal: controller.signal
-                      });
-                      
-                      clearTimeout(timeoutId);
-                      
-                      if (response.ok) {
-                        const geminiResult = await response.json();
-                        // Convert Gemini response format to match Claude format
-                        const text = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                        console.log(`[AI Gen] Success with ${currentModel}`);
-                        return { content: [{ text }] };
-                      }
-                    } else {
-                      // Anthropic Claude API
-                      response = await fetch('https://api.anthropic.com/v1/messages', {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                          'x-api-key': effectiveApiKey,
-                          'anthropic-version': '2023-06-01'
-                        },
+                  if (useGoogle) {
+                    // Google Gemini API
+                    response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${effectiveApiKey}`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
                       body: JSON.stringify({
-                        model: currentModel,
-                        max_tokens: currentMaxTokens,
+                        contents: [{
+                          parts: [{
+                            text: `${systemPrompt}\n\n${userPrompt}`
+                          }]
+                        }],
+                        generationConfig: {
+                          maxOutputTokens: 16000,
+                          temperature: 0.7
+                        }
+                      })
+                    });
+                    
+                    if (response.ok) {
+                      const geminiResult = await response.json();
+                      // Convert Gemini response format to match Claude format
+                      const text = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                      return { content: [{ text }] };
+                    }
+                  } else {
+                    // Anthropic Claude API
+                    response = await fetch('https://api.anthropic.com/v1/messages', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': effectiveApiKey,
+                        'anthropic-version': '2023-06-01'
+                      },
+                      body: JSON.stringify({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 16000,
                         messages: [
                           { role: 'user', content: userPrompt }
                         ],
                         system: systemPrompt
-                      }),
-                        signal: controller.signal
-                      });
-                      
-                      clearTimeout(timeoutId);
-                      
-                      if (response.ok) {
-                        console.log(`[AI Gen] Success with ${currentModel}`);
-                        return await response.json();
-                      }
-                    }
-                  } catch (fetchError: any) {
-                    clearTimeout(timeoutId);
+                      })
+                    });
                     
-                    // Check if it was an abort/timeout
-                    if (fetchError.name === 'AbortError') {
-                      console.log(`[AI Gen] ${currentModel} timed out after ${currentTimeout/1000}s, trying next model...`);
-                      lastError = { status: 'timeout', text: `Request timed out after ${currentTimeout/1000} seconds` };
-                      // Continue to next attempt with faster model
-                      continue;
+                    if (response.ok) {
+                      return await response.json();
                     }
-                    
-                    // Re-throw other fetch errors
-                    throw fetchError;
                   }
                   
                   const errorText = await response.text();
@@ -3494,19 +2973,8 @@ Return ONLY the JSON response with the complete CSV.`;
               
               console.log('[AI Gen] Claude response received');
               
-              // Check for truncation (Claude returns stop_reason: "max_tokens" when truncated)
-              const stopReason = result.stop_reason;
-              if (stopReason === 'max_tokens') {
-                console.error('[AI Gen] ⚠️ RESPONSE TRUNCATED - Claude hit max_tokens limit! Increase max_tokens setting.');
-              } else {
-                console.log(`[AI Gen] Stop reason: ${stopReason || 'not specified'}`);
-              }
-              
               // Extract content from Claude response
               const content = result.content?.[0]?.text || '';
-              
-              // Log content length for debugging
-              console.log(`[AI Gen] Response content length: ${content.length} chars`);
               
               // Expected CSV header patterns (Bot Manager uses 20-column format)
               const EXPECTED_HEADER_20 = 'Node Number,Node Type,Node Name,NLU Disabled?,Next Nodes,Message,Rich Asset Type,Rich Asset Content,Answer Required?,Behaviors,Command,Description,Output,Node Input,Parameter Input,Decision Variable,What Next?,Skill Tag,Variable,Platform Flag';
@@ -3538,92 +3006,8 @@ Return ONLY the JSON response with the complete CSV.`;
                   return str;
                 };
                 
-                // Command → Expected Decision Variable mapping (fix common AI mistakes)
-                // For most scripts, Decision Variable should match Output
-                const COMMAND_DEC_VAR_MAP: Record<string, string> = {
-                  'SysAssignVariable': 'success',
-                  'SysShowMetadata': 'success',
-                  'SysSetEnv': 'success',
-                  'SysVariableReset': 'success',
-                  'HandleBotError': 'error_type',
-                  'UserPlatformRouting': 'success',
-                  'GenAIFallback': 'result',
-                  'ValidateRegex': 'success',
-                  'ValidateDate': 'success',
-                  'GetValue': 'success',
-                  'SetVar': 'success',
-                  'VarCheck': 'valid',
-                  'LimitCounter': 'valid',
-                };
-                
-                // Scripts where DecVar should match Output (variable names)
-                const DECVAR_MATCHES_OUTPUT = new Set(['SysMultiMatchRouting']);
-                
-                let decVarFixes = 0;
-                
                 const rows = nodes.map((node: any) => {
                   const cols = new Array(26).fill('');
-                  
-                  // Normalize property names - AI might use different variants
-                  if (node.decisionVariable !== undefined && node.decVar === undefined) {
-                    node.decVar = node.decisionVariable;
-                  }
-                  if (node.decision_variable !== undefined && node.decVar === undefined) {
-                    node.decVar = node.decision_variable;
-                  }
-                  
-                  // CRITICAL FIX: Decision nodes (type D) CANNOT have Decision Variable or What Next
-                  // These fields are ONLY valid for Action nodes (type A)
-                  if (node.type === 'D') {
-                    if (node.decVar || node.whatNext) {
-                      console.log(`[AI Gen] FIXING: Clearing invalid decVar/whatNext from Decision node ${node.num} (type D cannot have these!)`);
-                      delete node.decVar;
-                      delete node.whatNext;
-                      delete node.command;
-                      delete node.output;
-                      delete node.paramInput;
-                      decVarFixes++;
-                    }
-                  }
-                  
-                  // Fix Decision Variable before serializing if needed
-                  if (node.type === 'A' && node.command) {
-                    // Special handling for SysMultiMatchRouting - DecVar should match Output
-                    if (DECVAR_MATCHES_OUTPUT.has(node.command)) {
-                      if (node.output && node.decVar && node.decVar !== node.output) {
-                        console.log(`[AI Gen] Fixing DecVar for node ${node.num} (${node.command}): "${node.decVar}" → "${node.output}" (must match output)`);
-                        node.decVar = node.output;
-                        decVarFixes++;
-                      } else if (!node.output && node.decVar) {
-                        // Output is missing, set it to match DecVar
-                        node.output = node.decVar;
-                      } else if (node.output && !node.decVar) {
-                        // DecVar is missing, set it to match Output
-                        node.decVar = node.output;
-                      } else if (!node.output && !node.decVar) {
-                        // Both missing, use default
-                        node.output = 'next_node';
-                        node.decVar = 'next_node';
-                        decVarFixes++;
-                      }
-                    } else {
-                      // For other commands, use the mapping
-                      const expectedDecVar = COMMAND_DEC_VAR_MAP[node.command];
-                      if (expectedDecVar) {
-                        // Always set to expected value for known commands
-                        if (!node.decVar || node.decVar !== expectedDecVar) {
-                          console.log(`[AI Gen] Fixing DecVar for node ${node.num} (${node.command}): "${node.decVar || '(empty)'}" → "${expectedDecVar}"`);
-                          node.decVar = expectedDecVar;
-                          decVarFixes++;
-                        }
-                        // Also fix output if missing
-                        if (!node.output) {
-                          node.output = expectedDecVar;
-                        }
-                      }
-                    }
-                  }
-                  
                   for (const [key, idx] of fieldMap) {
                     if (node[key] !== undefined && node[key] !== null && node[key] !== '') {
                       cols[idx] = String(node[key]);
@@ -3632,9 +3016,6 @@ Return ONLY the JSON response with the complete CSV.`;
                   return cols.map(escapeField).join(',');
                 });
                 
-                if (decVarFixes > 0) {
-                  console.log(`[AI Gen] Fixed ${decVarFixes} Decision Variable mismatches during serialization`);
-                }
                 console.log(`[AI Gen] Serialized ${nodes.length} JSON nodes to CSV`);
                 return [HEADER, ...rows].join('\n');
               };
@@ -3672,7 +3053,24 @@ Return ONLY the JSON response with the complete CSV.`;
                 }
               }
               
-              // Strategy 2: Try to parse the entire content as JSON (most likely to work)
+              // Strategy 2: Try to find JSON object with "csv" or "nodes" property
+              if (!generationResult) {
+                // Find the outermost JSON object
+                const jsonMatch = content.match(/\{[^{}]*"(?:csv|nodes)"\s*:\s*[\s\S]*?\}/);
+                if (jsonMatch) {
+                  try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (tryParseNodes(parsed) || (parsed.csv && typeof parsed.csv === 'string')) {
+                      generationResult = parsed;
+                      console.log('[AI Gen] Parsed JSON from raw object match');
+                    }
+                  } catch (e) {
+                    parseAttempts.push('raw JSON object match failed');
+                  }
+                }
+              }
+              
+              // Strategy 3: Try to parse the entire content as JSON
               if (!generationResult) {
                 try {
                   const parsed = JSON.parse(content);
@@ -3680,78 +3078,24 @@ Return ONLY the JSON response with the complete CSV.`;
                     generationResult = parsed;
                     console.log('[AI Gen] Parsed entire content as JSON');
                   }
-                } catch (e: any) {
-                  parseAttempts.push(`full content parse failed: ${e.message}`);
-                  console.log('[AI Gen] Full content parse error:', e.message);
+                } catch (e) {
+                  parseAttempts.push('full content parse failed');
                 }
               }
               
-              // Strategy 2.5: Try parsing between first { and last }
+              // Strategy 3.5: Try parsing between first { and last }
               if (!generationResult) {
                 const firstBrace = content.indexOf('{');
                 const lastBrace = content.lastIndexOf('}');
                 if (firstBrace !== -1 && lastBrace > firstBrace) {
                   try {
-                    const extracted = content.substring(firstBrace, lastBrace + 1);
-                    const parsed = JSON.parse(extracted);
+                    const parsed = JSON.parse(content.substring(firstBrace, lastBrace + 1));
                     if (tryParseNodes(parsed) || (parsed.csv && typeof parsed.csv === 'string')) {
                       generationResult = parsed;
                       console.log('[AI Gen] Parsed JSON from brace extraction');
                     }
-                  } catch (e: any) {
-                    parseAttempts.push(`brace extraction failed: ${e.message}`);
-                    console.log('[AI Gen] Brace extraction error:', e.message);
-                    
-                    // Check if this looks like truncated JSON
-                    const openBraces = (content.match(/\{/g) || []).length;
-                    const closeBraces = (content.match(/\}/g) || []).length;
-                    const openBrackets = (content.match(/\[/g) || []).length;
-                    const closeBrackets = (content.match(/\]/g) || []).length;
-                    
-                    if (openBraces > closeBraces || openBrackets > closeBrackets) {
-                      console.error(`[AI Gen] ⚠️ RESPONSE APPEARS TRUNCATED! Braces: ${openBraces} open, ${closeBraces} close. Brackets: ${openBrackets} open, ${closeBrackets} close.`);
-                      console.error('[AI Gen] Consider increasing max_tokens or simplifying the request.');
-                      parseAttempts.push('LIKELY TRUNCATED RESPONSE');
-                    }
-                  }
-                }
-              }
-              
-              // Strategy 3: Try to find and extract just the nodes array, then wrap it
-              if (!generationResult) {
-                const nodesMatch = content.match(/"nodes"\s*:\s*\[/);
-                if (nodesMatch) {
-                  const nodesStart = content.indexOf(nodesMatch[0]);
-                  const arrayStart = content.indexOf('[', nodesStart);
-                  if (arrayStart !== -1) {
-                    // Find the matching closing bracket by counting brackets
-                    let depth = 0;
-                    let arrayEnd = -1;
-                    for (let i = arrayStart; i < content.length; i++) {
-                      if (content[i] === '[') depth++;
-                      else if (content[i] === ']') {
-                        depth--;
-                        if (depth === 0) {
-                          arrayEnd = i;
-                          break;
-                        }
-                      }
-                    }
-                    
-                    if (arrayEnd !== -1) {
-                      try {
-                        const nodesArray = JSON.parse(content.substring(arrayStart, arrayEnd + 1));
-                        if (Array.isArray(nodesArray) && nodesArray.length > 0) {
-                          const parsed = { nodes: nodesArray };
-                          if (tryParseNodes(parsed)) {
-                            generationResult = parsed;
-                            console.log('[AI Gen] Extracted and parsed nodes array directly');
-                          }
-                        }
-                      } catch (e: any) {
-                        parseAttempts.push(`nodes array extraction failed: ${e.message}`);
-                      }
-                    }
+                  } catch (e) {
+                    parseAttempts.push('brace extraction failed');
                   }
                 }
               }
@@ -3817,21 +3161,12 @@ Return ONLY the JSON response with the complete CSV.`;
                   // Last resort: return error instead of garbage
                   console.error('[AI Gen] Failed to extract valid CSV from response');
                   console.error('[AI Gen] Content preview:', content.substring(0, 500));
-                  console.error('[AI Gen] Content end:', content.substring(Math.max(0, content.length - 200)));
-                  
-                  // Check if truncation was the issue
-                  const wasTruncated = stopReason === 'max_tokens' || parseAttempts.includes('LIKELY TRUNCATED RESPONSE');
                   
                   res.statusCode = 500;
                   res.end(JSON.stringify({
-                    error: wasTruncated 
-                      ? 'AI response was truncated - bot may be too complex'
-                      : 'Failed to parse AI response',
-                    details: wasTruncated
-                      ? 'The AI ran out of tokens before completing the response. Try simplifying your request or reducing the number of features.'
-                      : 'The AI response did not contain valid JSON or extractable CSV. Please try again.',
-                    parseAttempts,
-                    wasTruncated
+                    error: 'Failed to parse AI response',
+                    details: 'The AI response did not contain valid JSON or extractable CSV. Please try again.',
+                    parseAttempts
                   }));
                   return;
                 }
@@ -3866,1273 +3201,6 @@ Return ONLY the JSON response with the complete CSV.`;
               
             } catch (e: any) {
               console.error('[AI Gen] Generation error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // ============================================
-        // SEQUENTIAL GENERATION ENDPOINTS
-        // ============================================
-        
-        // Plan flows - AI identifies distinct flows needed from requirements
-        server.middlewares.use('/api/plan-flows', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { projectConfig, clarifyingQuestions } = JSON.parse(body);
-              
-              console.log('[Plan Flows] Analyzing requirements for:', projectConfig?.projectName);
-              
-              const targetCompany = projectConfig?.targetCompany || projectConfig?.projectName || 'the company';
-              
-              // Build a focused prompt for flow planning with COMPANY-SPECIFIC context
-              const planPrompt = `You are planning a customer service chatbot for ${targetCompany}.
-
-COMPANY: ${targetCompany}
-BOT TYPE: ${projectConfig?.projectType || 'support'}
-DESCRIPTION: ${projectConfig?.description || 'Customer service assistant'}
-
-${clarifyingQuestions?.length > 0 ? `USER REQUIREMENTS:\n${clarifyingQuestions.map((q: any) => `- ${q.question}: ${q.answer}`).join('\n')}` : ''}
-
-YOUR TASK: Identify 3-5 conversation flows that customers of ${targetCompany} would actually need.
-
-THINK ABOUT:
-- What are ${targetCompany}'s main products or services?
-- What questions do customers commonly ask?
-- What tasks might customers want to complete via chat?
-
-EXAMPLES of GOOD flows for different companies:
-- Coffee shop: menu_info, order_tracking, store_locations, loyalty_rewards
-- Insurance: file_claim, check_status, coverage_questions, billing
-- Retail: product_search, order_status, returns, store_hours
-
-CRITICAL NODE NUMBERING RULES:
-1. DO NOT use nodes 1-105 (startup infrastructure - RESERVED)
-2. DO NOT use nodes 200-210 (main menu - RESERVED)
-3. DO NOT use nodes 666, 999, 1800-1804, 99990 (system nodes - RESERVED)
-4. First flow: nodes 300-399
-5. Second flow: nodes 400-499
-6. Third flow: nodes 500-599
-7. Fourth flow: nodes 600-699
-8. Fifth flow: nodes 700-799 (max 5 flows)
-
-RULES:
-1. DO NOT include "welcome" flow - it's pre-built (nodes 200-299 reserved)
-2. Each flow gets exactly 100 nodes (e.g., 300-399, 400-499)
-3. Flow names should be specific to ${targetCompany}'s business
-4. Main menu labels should be short (2-4 words), action-oriented
-
-Return ONLY valid JSON:
-{
-  "flows": [
-    { "name": "specific_flow_name", "description": "What this helps customers do", "startNode": 300, "endNode": 350 },
-    { "name": "another_flow", "description": "Another customer need", "startNode": 400, "endNode": 450 },
-    ...max 5 flows
-  ],
-  "mainMenuOptions": [
-    { "label": "Short Action Label", "description": "Brief description", "flowName": "specific_flow_name", "startNode": 300 },
-    ...
-  ]
-}`;
-
-              // Use Haiku for fast planning (5-10s)
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              if (!apiKey) {
-                throw new Error('ANTHROPIC_API_KEY not configured');
-              }
-              
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-3-5-haiku-20241022',
-                  max_tokens: 2000,
-                  messages: [{ role: 'user', content: planPrompt }]
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API error: ${response.status} - ${errorText}`);
-              }
-              
-              const result = await response.json();
-              const content = result.content?.[0]?.text || '';
-              
-              // Parse JSON from response
-              let flows;
-              let mainMenuOptions;
-              try {
-                // Try to extract JSON from response
-                const jsonMatch = content.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                  const parsed = JSON.parse(jsonMatch[0]);
-                  flows = parsed.flows || [];
-                  mainMenuOptions = parsed.mainMenuOptions || [];
-                  
-                  // Filter out any "welcome" flow that starts before 300
-                  flows = flows.filter((f: any) => {
-                    const isWelcome = f.name?.toLowerCase() === 'welcome' || f.startNode < 300;
-                    if (isWelcome) {
-                      console.log(`[Plan Flows] Filtered out "${f.name}" (nodes ${f.startNode}-${f.endNode}) - reserved for startup`);
-                    }
-                    return !isWelcome;
-                  });
-                } else {
-                  throw new Error('No JSON found in response');
-                }
-              } catch (parseError) {
-                console.error('[Plan Flows] Failed to parse response:', content);
-                // Return default flows - note: NO welcome flow, starts at 300
-                const companyName = projectConfig?.targetCompany || 'Company';
-                flows = [
-                  { name: 'main_feature', description: `${companyName} main service`, startNode: 300, endNode: 400 },
-                  { name: 'help', description: 'Help and support options', startNode: 500, endNode: 550 }
-                ];
-                mainMenuOptions = [
-                  { label: 'Get Help', description: 'Main service', flowName: 'main_feature' },
-                  { label: 'Support', description: 'Help options', flowName: 'help' }
-                ];
-              }
-              
-              // Generate mainMenuOptions from flows if not provided
-              if (!mainMenuOptions || mainMenuOptions.length === 0) {
-                mainMenuOptions = flows.map((f: any) => ({
-                  label: f.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
-                  description: f.description,
-                  flowName: f.name,
-                  startNode: f.startNode
-                }));
-              }
-              
-              console.log(`[Plan Flows] Identified ${flows.length} flows:`, flows.map((f: any) => f.name).join(', '));
-              console.log(`[Plan Flows] Main menu options:`, mainMenuOptions.map((o: any) => o.label).join(', '));
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ flows, mainMenuOptions }));
-              
-            } catch (e: any) {
-              console.error('[Plan Flows] Error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // Refine architecture - AI updates flows based on user prompt
-        server.middlewares.use('/api/refine-architecture', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { currentFlows, currentMenuOptions, userPrompt, projectConfig } = JSON.parse(body);
-              
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              if (!apiKey) {
-                throw new Error('ANTHROPIC_API_KEY not configured');
-              }
-              
-              console.log(`[Refine Architecture] User prompt: "${userPrompt}"`);
-              
-              const prompt = `You are a solution architect refining a chatbot design.
-
-Current flows:
-${JSON.stringify(currentFlows, null, 2)}
-
-Current menu options:
-${JSON.stringify(currentMenuOptions, null, 2)}
-
-Project context:
-- Company: ${projectConfig?.targetCompany || 'Company'}
-- Project: ${projectConfig?.projectName || 'Support Bot'}
-
-User requested change: "${userPrompt}"
-
-Based on the user's request, update the flows and menu options.
-
-RULES:
-- Keep startNode values in valid ranges (300, 400, 500, etc.)
-- Use snake_case for flow names
-- Menu option labels should be user-friendly
-- Menu option flowName should match the flow name
-
-Return ONLY valid JSON:
-{
-  "flows": [
-    {"name": "flow_name", "description": "Description", "startNode": 300}
-  ],
-  "mainMenuOptions": [
-    {"label": "Menu Label", "description": "What this does", "flowName": "flow_name"}
-  ]
-}`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-3-5-haiku-20241022',
-                  max_tokens: 2000,
-                  messages: [{ role: 'user', content: prompt }]
-                })
-              });
-              
-              if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-              }
-              
-              const result = await response.json();
-              const content = result.content?.[0]?.text || '';
-              
-              // Parse JSON
-              const jsonMatch = content.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                console.log(`[Refine Architecture] Updated to ${parsed.flows?.length || 0} flows`);
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify(parsed));
-              } else {
-                throw new Error('No JSON in response');
-              }
-              
-            } catch (e: any) {
-              console.error('[Refine Architecture] Error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // Generate flow detail - AI generates internal conversation structure for a flow
-        server.middlewares.use('/api/generate-flow-detail', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { flowName, flowLabel, description, projectConfig } = JSON.parse(body);
-              
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              if (!apiKey) {
-                throw new Error('ANTHROPIC_API_KEY not configured');
-              }
-              
-              console.log(`[Flow Detail] Generating conversation for: ${flowLabel}`);
-              
-              const prompt = `You are designing the internal conversation flow for an intelligent chatbot that uses NLU (Natural Language Understanding) to process user input.
-
-Flow: "${flowLabel}"
-Description: ${description}
-Company: ${projectConfig?.targetCompany || 'Company'}
-
-Generate conversation nodes that showcase INTELLIGENT conversation design with:
-1. FREE TEXT INPUT - Ask open-ended questions where users type naturally
-2. NLU PROCESSING - Understand user intent from natural language
-3. RICH ASSETS - Use listpickers, quick_reply, datepickers, not just buttons
-4. SMART ROUTING - Route based on detected intent/entities
-
-NODE TYPES:
-- "response" - Bot sends a message (informational)
-- "question" - Bot asks something and waits for user input
-- "freetext" - Open-ended input field (name, description, feedback, etc.)
-- "nlu_intent" - NLU processes user's natural language to detect intent
-- "action" - Backend processing (API call, data lookup, etc.)
-- "listpicker" - Vertical list of selectable options with descriptions (use instead of carousel)
-- "datepicker" - Date selection
-- "file_upload" - User uploads a file/image
-
-Return JSON:
-{
-  "nodes": [
-    {
-      "type": "response",
-      "label": "Greeting",
-      "message": "Welcome message here"
-    },
-    {
-      "type": "freetext",
-      "label": "Get User Query",
-      "message": "How can I help you today? Just type your question.",
-      "inputType": "text",
-      "placeholder": "Type your question..."
-    },
-    {
-      "type": "nlu_intent",
-      "label": "Process Intent",
-      "message": "Understanding your request...",
-      "intents": ["product_inquiry", "support_request", "pricing", "other"]
-    },
-    {
-      "type": "listpicker",
-      "label": "Show Products",
-      "message": "Here are some options for you:",
-      "options": [
-        {"label": "Option A", "description": "Great for beginners", "dest": 610},
-        {"label": "Option B", "description": "Most popular choice", "dest": 620},
-        {"label": "Option C", "description": "Premium experience", "dest": 630}
-      ]
-    },
-    {
-      "type": "listpicker",
-      "label": "Select Category",
-      "message": "Which category interests you?",
-      "options": [
-        {"label": "Category 1", "description": "Details"},
-        {"label": "Category 2", "description": "Details"}
-      ]
-    },
-    {
-      "type": "question",
-      "label": "Confirmation",
-      "message": "Would you like to proceed?",
-      "options": [
-        {"label": "Yes, continue", "destination": "next"},
-        {"label": "No, go back", "destination": "back"}
-      ]
-    }
-  ]
-}
-
-DESIGN PRINCIPLES:
-- PREFER freetext + NLU over buttons for initial queries
-- Use listpickers for products/services (with descriptions)
-- Use listpickers for categories/selections
-- Use buttons ONLY for clear yes/no or 2-3 discrete choices
-- Include at least one freetext or nlu_intent node
-- Include at least one listpicker for selections
-- 5-8 nodes for a complete flow
-- End with resolution or handoff
-
-Return ONLY valid JSON.`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-3-5-haiku-20241022',
-                  max_tokens: 2000,
-                  messages: [{ role: 'user', content: prompt }]
-                })
-              });
-              
-              if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-              }
-              
-              const result = await response.json();
-              const content = result.content?.[0]?.text || '';
-              
-              // Parse JSON
-              const jsonMatch = content.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                console.log(`[Flow Detail] Generated ${parsed.nodes?.length || 0} conversation nodes`);
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify(parsed));
-              } else {
-                throw new Error('No JSON in response');
-              }
-              
-            } catch (e: any) {
-              console.error('[Flow Detail] Error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // Generate action node Python code
-        server.middlewares.use('/api/generate-action-code', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { nodeData, flowContext, projectConfig } = JSON.parse(body);
-              
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              if (!apiKey) {
-                throw new Error('ANTHROPIC_API_KEY not configured');
-              }
-              
-              console.log(`[ActionCode] Generating code for: ${nodeData?.type}`);
-              
-              const intentsStr = nodeData?.intents?.join(', ') || 'general';
-              const flowName = flowContext?.label || 'Flow';
-              const company = projectConfig?.targetCompany || 'Company';
-              
-              const prompt = `Generate a Pypestream action node Python script for NLU intent detection.
-
-CONTEXT:
-- Flow: "${flowName}"
-- Company: ${company}
-- Node Type: ${nodeData?.type}
-- Intents to detect: ${intentsStr}
-
-PYPESTREAM SCRIPT REQUIREMENTS:
-1. Script name = Class name (use "IntentRouter" or similar)
-2. One class per script with execute() method
-3. Return JSON with "success": "true" or "false" as first key
-4. Output variables must be ALL_CAPS
-5. Use the standard Pypestream header
-6. API keys come from event.get('api_key') or os.environ - NEVER hardcode
-7. Use self.event.get('global_variables', {}) for accessing session variables
-
-Generate a complete, production-ready Python script that:
-1. Processes user input text from event
-2. Uses keyword matching or simple NLU logic to detect intent
-3. Returns the detected intent and confidence
-4. Routes to appropriate next node based on intent
-5. Properly accesses any API keys from environment or event context
-
-SCRIPT TEMPLATE:
-\`\`\`python
-# -*- coding: utf-8 -*-
-r'''
-    ______  ______  _____________________  _________    __  ___
-   / __ \\ \\/ / __ \\/ ____/ ___/_  __/ __ \\/ ____/   |  /  |/  /
-  / /_/ /\\  / /_/ / __/  \\__ \\ / / / /_/ / __/ / /| | / /|_/ /
- / ____/ / / ____/ /___ ___/ // / / _, _/ /___/ ___ |/ /  / /
-/_/     /_/_/   /_____//____//_/ /_/ |_/_____/_/  |_/_/  /_/
-action node script
-'''
-import os
-
-class IntentRouter:
-    """
-    Routes user input to appropriate flow based on detected intent.
-    Intents: ${intentsStr}
-    """
-    
-    def __init__(self, event):
-        self.event = event
-        # Get user input from the event (collected from previous decision node)
-        self.user_input = event.get('user_input', '').lower()
-        # Access global variables from session
-        self.global_vars = event.get('global_variables', {})
-        # API keys should come from environment or event context, NEVER hardcoded
-        self.api_key = event.get('api_key') or os.environ.get('PYPESTREAM_API_KEY')
-        
-    def execute(self):
-        try:
-            # Intent detection logic
-            detected_intent = self._detect_intent()
-            confidence = self._calculate_confidence(detected_intent)
-            
-            return {
-                "success": "true",
-                "DETECTED_INTENT": detected_intent,
-                "CONFIDENCE": str(confidence),
-                "ROUTING_DECISION": detected_intent if confidence > 0.5 else "fallback"
-            }
-        except Exception as e:
-            return {
-                "success": "false",
-                "ERROR_MESSAGE": str(e),
-                "ROUTING_DECISION": "error"
-            }
-    
-    def _detect_intent(self):
-        # Keyword-based intent detection
-        intent_keywords = {
-            # Add intent keywords here
-        }
-        
-        for intent, keywords in intent_keywords.items():
-            if any(kw in self.user_input for kw in keywords):
-                return intent
-        
-        return "other"
-    
-    def _calculate_confidence(self, intent):
-        # Simple confidence scoring
-        return 0.85 if intent != "other" else 0.3
-\`\`\`
-
-IMPORTANT:
-- Customize the script for these specific intents: ${intentsStr}
-- Add appropriate keywords for each intent based on the flow context
-- Access API keys from os.environ or event context, NEVER hardcode them
-- Include proper error handling with try/except
-- Return "success": "false" on errors with ERROR_MESSAGE
-
-Return ONLY the Python code, no markdown.`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-3-5-haiku-20241022',
-                  max_tokens: 3000,
-                  messages: [{ role: 'user', content: prompt }]
-                })
-              });
-              
-              if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
-              }
-              
-              const result = await response.json();
-              let code = result.content?.[0]?.text || '';
-              
-              // Clean up markdown if present
-              code = code.replace(/^```python\n?/gm, '').replace(/^```\n?/gm, '').trim();
-              
-              console.log(`[ActionCode] Generated ${code.length} characters of code`);
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ code }));
-              
-            } catch (e: any) {
-              console.error('[ActionCode] Error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // Test action node code (simulated)
-        server.middlewares.use('/api/test-action-code', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { code, nodeData } = JSON.parse(body);
-              
-              console.log('[TestCode] Running syntax validation...');
-              
-              // Basic syntax validation
-              const hasClass = /class\s+\w+/.test(code);
-              const hasExecute = /def\s+execute\s*\(/.test(code);
-              const hasReturn = /return\s*\{/.test(code);
-              const hasSuccess = /"success"\s*:/.test(code);
-              
-              const issues: string[] = [];
-              if (!hasClass) issues.push('Missing class definition');
-              if (!hasExecute) issues.push('Missing execute() method');
-              if (!hasReturn) issues.push('Missing return statement');
-              if (!hasSuccess) issues.push('Missing "success" key in return');
-              
-              if (issues.length === 0) {
-                // Simulate test execution
-                const mockEvent = {
-                  user_input: "I want to watch a comedy movie",
-                  session_id: "test-session-123"
-                };
-                
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({
-                  success: true,
-                  output: `✓ Syntax validation passed
-✓ Class definition found
-✓ execute() method found
-✓ Return statement with success key found
-
-Mock Test Run:
-  Input: "${mockEvent.user_input}"
-  Expected Output: { "success": "true", "DETECTED_INTENT": "comedy_recommendation", ... }
-  
-Script is ready for deployment!`
-                }));
-              } else {
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({
-                  success: false,
-                  output: `Validation failed:\n${issues.map(i => '✗ ' + i).join('\n')}\n\nPlease fix these issues before deploying.`
-                }));
-              }
-              
-            } catch (e: any) {
-              console.error('[TestCode] Error:', e);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: e.message || String(e) }));
-            }
-          });
-        });
-        
-        // Generate a single flow - focused AI call for one flow at a time
-        server.middlewares.use('/api/generate-flow', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { 
-                flow,                // { name, description, startNode, endNode }
-                projectConfig,       // { projectName, projectType, description, clientName }
-                contextNodes,        // Array of key node numbers already generated
-                isWelcome,           // Boolean - if true, include main menu
-                conversationPreview  // Optional: Array of conversation nodes the user has previewed/approved
-              } = JSON.parse(body);
-              
-              const targetCompany = projectConfig?.targetCompany || projectConfig?.projectName || 'the company';
-              const hasPreview = conversationPreview && conversationPreview.length > 0;
-              console.log(`[Generate Flow] Generating "${flow.name}" flow for ${targetCompany} (nodes ${flow.startNode}-${flow.endNode})${hasPreview ? ` - using ${conversationPreview.length} preview nodes for consistency` : ''}`);
-              
-              // Build preview context if user has already seen/approved a conversation structure
-              let previewContext = '';
-              if (hasPreview) {
-                previewContext = `
-
-## CRITICAL: USER-APPROVED CONVERSATION STRUCTURE
-Convert these preview nodes EXACTLY to CSV format:
-
-${JSON.stringify(conversationPreview, null, 2)}
-
-### TYPE-TO-CSV CONVERSION MAP:
-
-**"response"** → Decision node (D)
-- message: exact text from preview
-- nextNodes: next node number in sequence
-- No rich assets needed
-
-**"freetext"** → Decision node (D) 
-- message: exact text from preview
-- nluDisabled: "1" (CRITICAL - captures raw text, no NLU processing)
-- ansReq: "1"
-- nextNodes: MUST point to the NEXT node in this flow (NOT 1800!)
-- NO buttons/rich assets (user types freely)
-
-**"nlu_intent"** → Action node (A)
-- command: "SysMultiMatchRouting"
-- paramInput: {"global_vars": "COLLECTED_VALUE", "input_vars": "intent1,intent2,..."}
-- decVar: "valid"
-- whatNext: "intent1~next1|intent2~next2|false~fallback|error~99990"
-- nodeInput: "collected_value: previous_freetext_node_num"
-
-**"carousel"** → Decision node (D)
-- message: exact text from preview
-- richType: "carousel"
-- richContent: {"type":"dynamic","source_node":ACTION_NODE,"source_var":"carousel_var"}
-- Requires preceding Action node to populate carousel_var
-- nextNodes: "" (carousel items have destinations)
-- ansReq: "1"
-
-**"listpicker"** → Decision node (D)
-- message: exact text from preview
-- richType: "listpicker"
-- richContent: {"type":"static","options":[...from preview items...]}
-- ansReq: "1"
-
-**"question"** → Decision node (D)
-- message: exact text from preview
-- richType: "quick_reply" or "buttons"
-- richContent: {"type":"static","options":[...from preview options...]}
-- ansReq: "1"
-
-**"datepicker"** → Decision node (D)
-- message: exact text from preview
-- richType: "datepicker"
-- nluDisabled: "1"
-- ansReq: "1"
-- nextNodes: next node number
-
-**"file_upload"** → Decision node (D)
-- message: exact text from preview
-- richType: "file_upload"
-- richContent: {"type":"action_node","upload_label":"Upload","cancel_label":"Skip"}
-- ansReq: "1"
-
-**"action"** → Action node (A)
-- command: appropriate system command or custom script
-- paramInput: relevant parameters
-- decVar: "success"
-- whatNext: "true~next|error~99990"
-
-### CRITICAL RULES:
-1. Nodes MUST chain together - each node's nextNodes points to the next node in sequence!
-2. freetext nodes NEVER route to 1800 - they route to the NEXT node in this flow!
-3. Generate nodes in EXACT sequence shown in preview - do NOT skip or rearrange!
-4. Use node numbers ${flow.startNode} through ${flow.endNode} in order
-5. The LAST node should offer: return to menu (200), talk to agent (999), or end (666)
-`;
-              }
-              
-              // Build focused prompt for this specific flow with COMPANY-SPECIFIC context
-              const flowPrompt = `You are creating a customer service chatbot for ${targetCompany}.${previewContext}
-
-COMPANY: ${targetCompany}
-BOT PURPOSE: ${projectConfig?.description || 'Customer support assistant'}
-
-YOUR TASK: Generate the "${flow.name}" conversation flow.
-FLOW DESCRIPTION: ${flow.description}
-NODE RANGE: ${flow.startNode} to ${flow.endNode}
-
-CRITICAL REQUIREMENTS:
-1. Be SPECIFIC to ${targetCompany} - use their actual product names, services, terminology
-2. Messages should sound like a ${targetCompany} employee - friendly, knowledgeable, on-brand
-3. Provide REAL VALUE - don't just redirect to website or agents. Answer common questions directly.
-4. Keep messages concise (under 60 characters when possible)
-5. ONLY end the flow (at the LAST node) with options to: return to main menu (node 200), talk to agent (999), or end chat (666)
-
-## INTELLIGENT CONVERSATION DESIGN - USE VARIETY! ##
-This bot uses NLU (Natural Language Understanding). Design conversations that feel natural and intelligent:
-
-1. **FREE TEXT INPUT** - At least one node should accept typed user input (freetext/nluDisabled="")
-   - Ask open-ended questions: "Describe what you're looking for" or "What's your question?"
-   - Let users TYPE naturally, not just click buttons
-   
-2. **RICH ASSET TYPES** - Don't just use buttons! Include VARIETY:
-   - **listpicker**: Vertical selection list with descriptions - PREFERRED for products, categories, plans
-     richType: "listpicker", richContent: {"type":"static","options":[{"label":"X","description":"desc","dest":"Y"}]}
-   - **quick_reply**: Horizontal pills for quick choices (2-4 options)
-   - **buttons**: Standard vertical buttons (use sparingly - prefer listpicker for 4+ options)
-   - **datepicker/timepicker**: ALWAYS use for date/time input
-   NOTE: AVOID carousels - they require real image URLs. Use listpickers instead.
-   
-3. **SMART ROUTING** - Set nextNodes to 1800 on most question nodes so typed responses go to GenAI
-
-MINIMUM REQUIREMENTS FOR EACH FLOW:
-- At least ONE free text collection point (where user types naturally)
-- At least ONE rich asset (carousel OR listpicker) - not just buttons!
-- Most question nodes should have nextNodes="1800" to enable NLU
-
-## MOST IMPORTANT RULE - READ THIS! ##
-THE FIRST NODE OF THIS FLOW MUST HAVE BUTTONS THAT ARE SPECIFIC TO "${flow.name}"!
-
-Example for "product_recommendation" flow:
-- WRONG: [Back to Menu] [Talk to Agent] ← These don't help users find products!
-- RIGHT: [Office Supplies] [Electronics] [Furniture] [Printer Ink]
-
-Example for "order_tracking" flow:
-- WRONG: [Back to Menu] [Talk to Agent]  
-- RIGHT: [Track My Order] [Check Delivery Status] [Find Order Number]
-
-"Back to Menu" and "Talk to Agent" should ONLY appear on:
-- Error recovery nodes
-- The FINAL node of the flow (after the user's task is complete)
-- NOT on the first or middle nodes!
-
-EXAMPLE GOOD MESSAGE for a coffee company:
-"Our most popular drinks are the Original Blend coffee, Iced Capp, and French Vanilla. What sounds good?"
-
-EXAMPLE BAD MESSAGE (too generic):
-"I can help you with menu information. What would you like to know?"
-
-CRITICAL NODE NUMBER RULES:
-- ONLY use nodes ${flow.startNode}-${flow.endNode} for this flow!
-- NEVER use nodes 1-105 (startup - RESERVED)
-- NEVER use nodes 200-210 (main menu - RESERVED) 
-- NEVER use nodes 1800-1804 (fallback - RESERVED)
-- You CAN route TO system nodes (200, 666, 999, 99990) but DON'T create them
-
-TECHNICAL REQUIREMENTS:
-- Decision nodes (type D): Need "nextNodes" or rich asset with destinations
-- Action nodes (type A): Need "command" (use SysAssignVariable or SysMultiMatchRouting), "paramInput", "decVar", "whatNext"
-- Route any errors to node 99990
-- Rich assets: Use "quick_reply" or "buttons" for options
-
-## CRITICAL: NLU AND USER INPUT HANDLING ##
-
-Most nodes should LISTEN to user input and route to AI for intelligent responses!
-
-The pattern is:
-1. Show buttons as HELPFUL SHORTCUTS (not the only way to respond)
-2. Set nextNodes to 1800 (GenAI) so typed responses get intelligent handling
-3. User can EITHER click a button OR type a response
-4. If they type, GenAI understands and responds intelligently
-
-Example - GOOD pattern:
-{
-  "num": 300,
-  "message": "What type of product are you looking for?",
-  "nextNodes": "1800",  ← Typed input goes to AI for intelligent response!
-  "richType": "quick_reply",
-  "richContent": {"type": "static", "options": [
-    {"label": "Office Supplies", "dest": 310},
-    {"label": "Electronics", "dest": 320}
-  ]},
-  "nluDisabled": "",  ← EMPTY means NLU is ON - user can type!
-  "ansReq": "1"
-}
-
-If user clicks "Office Supplies" → goes to 310
-If user types "staplers" → goes to 1800 (GenAI) → AI gives helpful response about staplers!
-
-ONLY set nluDisabled to "1" when:
-- Collecting specific data (email, phone, order number)
-- Binary yes/no confirmation where typing doesn't make sense
-- The node has EXACTLY ONE next destination
-
-For most question nodes: Keep nluDisabled EMPTY and set nextNodes to 1800!
-
-SYSTEM NODES (route TO these, but DON'T recreate them):
-- 200: Main Menu - use for "Back to Menu" buttons (takes user to primary options)
-- 201: Return Menu - use ONLY at END of a completed flow ("anything else?")
-- 666: End chat gracefully
-- 999: Transfer to live agent
-- 99990: Error handler
-
-CRITICAL BUTTON ROUTING:
-- "Back to Menu" → ALWAYS route to 200 (Main Menu)
-- "Start Over" → Route to 1 or 200
-- Completed a task? → Route to 201 (Return Menu asks "anything else?")
-- NEVER put "Back to Menu" that routes to 201 - that's confusing!
-
-## CRITICAL: BUTTONS MUST MATCH THE QUESTION! ##
-
-❌ WRONG - Question without relevant answers:
-Message: "What type of product are you looking for?"
-Buttons: [Back to Menu] [Talk to Agent]
-WHY WRONG: The buttons don't answer the question! User can't select a product type!
-
-✅ RIGHT - Buttons directly answer the question:
-Message: "What type of product are you looking for?"
-Buttons: [Office Supplies] [Electronics] [Furniture] [Printer Ink]
-WHY RIGHT: Each button IS an answer to the question!
-
-❌ WRONG - Escape buttons on a flow start:
-Flow starts with: "How can I help with your order?"
-Buttons: [Back to Menu] [Talk to Agent]
-
-✅ RIGHT - Helpful options that move forward:
-Flow starts with: "How can I help with your order?"
-Buttons: [Track My Order] [Return an Item] [Change My Order] [Cancel Order]
-
-RULE: The FIRST NODE of every flow MUST have buttons that are SPECIFIC ANSWERS or ACTIONS related to that flow!
-- "Back to Menu" and "Talk to Agent" should ONLY appear on error states or at the END of flows, NOT at the start!
-
-IMPORTANT JSON FORMAT RULES:
-- Return ONLY a JSON object with a "nodes" array
-- Each node must have: num, type, name
-
-## CRITICAL: EVERY DECISION NODE MUST HAVE A PATH FORWARD! ##
-
-Each Decision node needs EITHER:
-1. **nextNodes** - for conversational/informational flow (no user choice needed)
-2. **richContent with buttons** - for choice points (user must select an option)
-
-NEVER create a dead-end node with neither nextNodes nor buttons!
-
-### When to use nextNodes (conversational flow):
-- Providing information before moving on
-- Intermediate steps in a sequence
-- Setting context before a question
-
-Example: {"num": 315, "type": "D", "name": "Pen Info", 
-  "message": "We have a great selection of pens! Let me show you our categories.",
-  "nextNodes": "316"}  ← Flows naturally to next node
-
-### When to use richContent (choice points):
-- Asking the user to choose between options
-- Branching the conversation based on user selection
-- End of a topic (Back to Menu, Continue, etc.)
-
-Example: {"num": 316, "type": "D", "name": "Pen Categories",
-  "message": "What type of pen are you looking for?",
-  "richType": "quick_reply", 
-  "richContent": {"type": "static", "options": [
-    {"label": "Ballpoint", "dest": 320},
-    {"label": "Gel Pens", "dest": 330},
-    {"label": "Markers", "dest": 340}
-  ]}, "ansReq": "1"}
-
-### When to use "Back to Menu" buttons:
-- ONLY at the END of a topic/flow
-- After completing a task
-- When user needs an exit point
-- NOT on every node! Only when it makes sense.
-
-❌ WRONG patterns:
-- Question with no buttons: "What do you want?" + (no richContent, no nextNodes) → DEAD END!
-- Info with no next: "Here's info..." + (no nextNodes) → DEAD END!
-- "Back to Menu" on every node → POOR UX!
-
-✅ CORRECT patterns:
-- Question → buttons with relevant choices
-- Info → nextNodes to continue flow
-- End of topic → "Back to Menu" / "Continue" / "All Done" buttons
-
-CRITICAL FIELD DEFINITIONS (do NOT confuse these - MOST COMMON AI ERROR!):
-
-⚠️ "message" = TEXT shown to user (WORDS, NOT NUMBERS!)
-   GOOD: "What type of vehicle are you interested in?"
-   BAD: "310" or "310,320,330" ← NEVER DO THIS! Numbers are not messages!
-
-⚠️ "nextNodes" = SINGLE node number OR empty (NEVER multiple comma-separated!)
-   GOOD: "" (empty - when buttons handle routing)
-   GOOD: "320" (single fallback node)
-   BAD: "310,320,330" ← NEVER multiple nodes! Use button dest instead!
-
-⚠️ "richContent" = NEVER empty if richType is set!
-   If you set richType, you MUST provide valid richContent!
-   WRONG: {"richType": "buttons", "richContent": ""}  ← Will cause validation error!
-   RIGHT: {"richType": "buttons", "richContent": {"type":"static","options":[...]}}
-
-⚠️ Button labels MUST NOT contain the pipe character "|"!
-   The "|" is ONLY for separating buttons in pipe format, NEVER inside a label!
-   WRONG: "Enable 2|FA" or "$25|k" or "10|am"  ← Pipe inside label breaks parsing!
-   RIGHT: "Enable 2FA" or "$25k" or "10am"  ← No pipes in labels!
-
-- "nodeInput": For action nodes only - maps variables. Leave empty for decision nodes.
-
-Decision nodes (type D): 
-- message = text to display (WORDS AND SENTENCES - NEVER node numbers or type names like "quick_reply"!)
-- nextNodes = EMPTY when using buttons/quick_reply/listpicker (button "dest" handles routing!)
-- nextNodes = single node number ONLY for nodes without buttons (NLU fallback)
-- ansReq = "1" if user response required
-- richType = "quick_reply" or "button" or "listpicker" (the TYPE goes here, not in message!)
-- richContent = the button options with dest values (JSON or pipe format)
-
-Action nodes (type A): 
-- command, paramInput, decVar, whatNext
-- NO message field (message is ONLY for Decision nodes)
-
-Do NOT use commas in message text (use semicolons or reword).
-
-Return ONLY valid JSON (no markdown, no code fences):
-{
-  "nodes": [
-    {
-      "num": ${flow.startNode},
-      "type": "D",
-      "name": "${flow.name} → Start",
-      "message": "What are you looking for today?",
-      "nextNodes": "1800",
-      "richType": "quick_reply",
-      "richContent": {"type": "static", "options": [
-        {"label": "Category A", "dest": ${flow.startNode + 10}},
-        {"label": "Category B", "dest": ${flow.startNode + 20}},
-        {"label": "Category C", "dest": ${flow.startNode + 30}}
-      ]},
-      "nluDisabled": "",
-      "ansReq": "1"
-    },
-    {
-      "num": ${flow.startNode + 10},
-      "type": "D", 
-      "name": "${flow.name} → Category A Info",
-      "message": "Great choice! Category A includes our most popular items. Let me show you the options.",
-      "nextNodes": "${flow.startNode + 11}"
-    },
-    {
-      "num": ${flow.startNode + 11},
-      "type": "D", 
-      "name": "${flow.name} → Category A Options",
-      "message": "Which specific item interests you?",
-      "nextNodes": "1800",
-      "richType": "button",
-      "richContent": {"type": "static", "options": [
-        {"label": "Item 1", "dest": ${flow.startNode + 12}},
-        {"label": "Item 2", "dest": ${flow.startNode + 13}},
-        {"label": "See All Items", "dest": ${flow.startNode + 14}}
-      ]},
-      "nluDisabled": "",
-      "ansReq": "1"
-    },
-    {
-      "num": ${flow.startNode + 12},
-      "type": "D", 
-      "name": "${flow.name} → Item 1 Details",
-      "message": "Item 1 is excellent for X and Y. Price: $X. Need more info or ready to move on?",
-      "nextNodes": "1800",
-      "richType": "button",
-      "richContent": {"type": "static", "options": [
-        {"label": "Add to Cart", "dest": ${flow.startNode + 50}},
-        {"label": "See Other Options", "dest": ${flow.startNode + 11}},
-        {"label": "Back to Menu", "dest": 200}
-      ]},
-      "nluDisabled": "",
-      "ansReq": "1"
-    }
-  ]
-}
-
-KEY PATTERNS:
-- QUESTION with buttons: Set nextNodes to "1800" so typed responses go to AI!
-- Buttons are SHORTCUTS, not the only way to respond
-- User types "staplers" → AI understands and gives helpful response
-- INFO THEN CONTINUE: Use nextNodes to flow to next node, no buttons needed
-- Keep nluDisabled EMPTY for most nodes (lets user type naturally)
-- END OF TOPIC: Use buttons with "Back to Menu", "All Done", or next action
-
-## CRITICAL: AVOID QUESTION LOOPS - DELIVER ACTUAL VALUE! ##
-
-❌ WRONG - Question loop (keeps asking, never delivers):
-Node 340: "What nutritional info do you need?" → [Calories] [Ingredients] [Allergens]
-Node 341 (after clicking Ingredients): "Need other nutritional details?" → [Other Nutrition] [Browse Products]
-WHY WRONG: User clicked "Ingredients" expecting to SEE ingredients, not another question!
-
-✅ RIGHT - Question leads to ACTUAL CONTENT:
-Node 340: "What nutritional info do you need?" → [Calories] [Ingredients] [Allergens]
-Node 341 (after clicking Ingredients): "Here are the ingredients for our classic products:
-
-**Hershey's Milk Chocolate**: Milk chocolate (sugar, milk, cocoa butter, chocolate, soy lecithin, PGPR), milk fat, lactose.
-
-**Hershey's Kisses**: Same as above plus almonds for almond variety.
-
-Want details on a specific product?"
-→ [Specific Product] [Back to Nutrition] [Back to Menu]
-
-## THE RULE: Maximum 2 questions before DELIVERING INFORMATION ##
-- Question 1: "What can I help with?" (category)
-- Question 2: "Which specific item?" (selection)
-- THEN: Actually deliver the information, answer, or action!
-
-If user clicks "Ingredients List" → SHOW THE INGREDIENTS, don't ask another question!
-If user clicks "Track Order" → COLLECT ORDER # then SHOW STATUS, don't loop back!
-If user clicks "Store Hours" → TELL THEM THE HOURS or how to find them!`;
-
-              // Use Sonnet for flow generation - Haiku was ignoring richContent requirements
-              // Sonnet is slower but much better at generating proper contextual buttons
-              const apiKey = process.env.ANTHROPIC_API_KEY;
-              if (!apiKey) {
-                throw new Error('ANTHROPIC_API_KEY not configured');
-              }
-              
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': apiKey,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-sonnet-4-20250514',
-                  max_tokens: 8000, // Increased for complex flows with many nodes
-                  system: 'You are a JSON generator. You ONLY output valid JSON with no explanation, no thinking, no markdown. Your response must start with { and end with }. Keep responses concise - generate 8-12 nodes maximum per flow.',
-                  messages: [{ role: 'user', content: flowPrompt }]
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`API error: ${response.status} - ${errorText}`);
-              }
-              
-              const result = await response.json();
-              const content = result.content?.[0]?.text || '';
-              const stopReason = result.stop_reason;
-              
-              // Log if response was truncated
-              if (stopReason === 'max_tokens') {
-                console.warn(`[Generate Flow] WARNING: Response was truncated due to max_tokens limit!`);
-              }
-              console.log(`[Generate Flow] Stop reason: ${stopReason}, content length: ${content.length}`);
-              
-              // Check for empty content (API returned nothing)
-              if (!content || content.trim().length === 0) {
-                console.error('[Generate Flow] API returned empty content - possible network issue');
-                throw new Error('API returned empty response - check network connection');
-              }
-              
-              // Log first 500 chars of content for debugging
-              console.log(`[Generate Flow] Raw response preview (first 500 chars): ${content.substring(0, 500)}`);
-              
-              // Parse JSON from response with robust extraction
-              let nodes = [];
-              
-              try {
-                // Remove markdown code fences if present
-                let cleanContent = content
-                  .replace(/```json\s*/gi, '')
-                  .replace(/```\s*/g, '')
-                  .trim();
-                
-                // If content doesn't start with {, try to find the first {
-                if (!cleanContent.startsWith('{')) {
-                  const jsonStart = cleanContent.indexOf('{');
-                  if (jsonStart !== -1) {
-                    console.log(`[Generate Flow] Stripping ${jsonStart} chars of preamble before JSON`);
-                    cleanContent = cleanContent.substring(jsonStart);
-                  }
-                }
-                
-                // First, try to parse the entire response as JSON directly
-                try {
-                  // Sometimes the AI returns clean JSON
-                  const directParse = JSON.parse(cleanContent);
-                  if (directParse.nodes && Array.isArray(directParse.nodes)) {
-                    nodes = directParse.nodes;
-                    console.log(`[Generate Flow] Direct JSON parse succeeded: ${nodes.length} nodes`);
-                  }
-                } catch (directParseError) {
-                  console.log(`[Generate Flow] Direct parse failed, trying extraction methods`);
-                }
-                
-                // If direct parse didn't work, try to find the nodes array
-                if (nodes.length === 0) {
-                  // Try to find the nodes array - use a more greedy match for nested objects
-                  const nodesStartMatch = cleanContent.match(/"nodes"\s*:\s*\[/);
-                  if (nodesStartMatch) {
-                    const startIndex = nodesStartMatch.index! + nodesStartMatch[0].length - 1;
-                    let bracketCount = 1;
-                    let endIndex = startIndex + 1;
-                    
-                    // Find the matching closing bracket by counting brackets
-                    while (bracketCount > 0 && endIndex < cleanContent.length) {
-                      const char = cleanContent[endIndex];
-                      if (char === '[') bracketCount++;
-                      else if (char === ']') bracketCount--;
-                      endIndex++;
-                    }
-                    
-                    if (bracketCount === 0) {
-                      const nodesArrayStr = cleanContent.substring(startIndex, endIndex);
-                      try {
-                        // Clean up trailing commas
-                        const cleanedArray = nodesArrayStr.replace(/,(\s*[\]}])/g, '$1');
-                        nodes = JSON.parse(cleanedArray);
-                        console.log(`[Generate Flow] Bracket-matched array extraction: ${nodes.length} nodes`);
-                      } catch (arrayParseError) {
-                        console.log(`[Generate Flow] Bracket extraction parse failed: ${arrayParseError}`);
-                      }
-                    }
-                  }
-                }
-                
-                // If direct extraction didn't work, try parsing the whole response
-                if (nodes.length === 0) {
-                  // Find the outermost JSON object containing "nodes"
-                  const jsonMatch = cleanContent.match(/\{[\s\S]*"nodes"[\s\S]*\}/);
-                  if (jsonMatch) {
-                    let jsonStr = jsonMatch[0];
-                    
-                    // Apply repairs
-                    // Fix trailing commas before ] or }
-                    jsonStr = jsonStr.replace(/,(\s*[\]}])/g, '$1');
-                    // Fix unescaped newlines in strings (replace with space)
-                    jsonStr = jsonStr.replace(/(?<=[^\\]"[^"]*)\n(?=[^"]*")/g, ' ');
-                    // Fix double quotes inside strings that aren't escaped
-                    jsonStr = jsonStr.replace(/"([^"]*)"([^",:}\]]*)"([^"]*)"/g, '"$1\\"$2\\"$3"');
-                    
-                    try {
-                      const parsed = JSON.parse(jsonStr);
-                      nodes = parsed.nodes || [];
-                      console.log(`[Generate Flow] Full JSON parse succeeded: ${nodes.length} nodes`);
-                    } catch (fullParseError: any) {
-                      console.log(`[Generate Flow] Full JSON parse failed at position ${fullParseError.message.match(/position (\d+)/)?.[1] || 'unknown'}`);
-                      
-                      // Last resort: try to extract individual node objects
-                      const nodeMatches = cleanContent.matchAll(/\{\s*"num"\s*:\s*(\d+)[\s\S]*?"type"\s*:\s*"[AD]"[\s\S]*?\}(?=\s*[,\]])/g);
-                      const extractedNodes = [];
-                      for (const match of nodeMatches) {
-                        try {
-                          const nodeStr = match[0].replace(/,(\s*[\]}])/g, '$1');
-                          const node = JSON.parse(nodeStr);
-                          extractedNodes.push(node);
-                        } catch (e) {
-                          // Skip malformed nodes
-                        }
-                      }
-                      if (extractedNodes.length > 0) {
-                        nodes = extractedNodes;
-                        console.log(`[Generate Flow] Extracted ${nodes.length} individual nodes as fallback`);
-                      }
-                    }
-                  } else {
-                    console.error('[Generate Flow] No JSON object with "nodes" found in response');
-                    console.error('[Generate Flow] Content preview:', cleanContent.substring(0, 300));
-                  }
-                }
-              } catch (parseError: any) {
-                console.error(`[Generate Flow] Parse failed:`, parseError.message);
-                console.error('[Generate Flow] Content preview:', content.substring(0, 500));
-              }
-              
-              console.log(`[Generate Flow] Generated ${nodes.length} nodes for "${flow.name}"`);
-              
-              // DEBUG: Log richContent for each node to trace button generation
-              for (const node of nodes) {
-                const richType = node.richType || node.richAssetType || '(none)';
-                const richContent = node.richContent || node.richAssetContent || '(none)';
-                const contentPreview = typeof richContent === 'object' 
-                  ? JSON.stringify(richContent).substring(0, 100)
-                  : String(richContent).substring(0, 100);
-                console.log(`[Generate Flow] Node ${node.num}: richType="${richType}", richContent=${contentPreview}`);
-              }
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({ nodes, flowName: flow.name }));
-              
-            } catch (e: any) {
-              console.error('[Generate Flow] Error:', e);
               res.statusCode = 500;
               res.end(JSON.stringify({ error: e.message || String(e) }));
             }
@@ -5366,12 +3434,10 @@ ${validDocs.join('\n\n---\n\n')}
 - Fix: Add a proper Command. If unsure, use "SysAssignVariable" with Parameter Input: {"set":{"PLACEHOLDER":"value"}}
 
 ### "proposed dir_field is not an element of the proposed payload"
-**MOST LIKELY CAUSE: You have Decision Variable on a Decision node (type D)!**
-- Decision nodes (type D) CANNOT have Decision Variable or What Next - these are ONLY for Action nodes!
-- FIX: If the node is type D, remove Decision Variable and What Next columns entirely!
-- FIX: If the node SHOULD be type A (has a Command), change type from D to A
-- For Action nodes only: Decision Variable = "success", What Next? = "true~100|false~200|error~99990"
-- Node 1800 specifically MUST be type A with GenAIFallback command - NEVER type D!
+- This means: Decision Variable doesn't match what the script outputs
+- Action nodes with What Next? routing MUST have Decision Variable that matches Output
+- Fix: Set Decision Variable to match a key the script returns (usually "success")
+- For SysAssignVariable: Decision Variable = "success", What Next? = "true~100|false~200|error~99990"
 
 ### "'datepicker' is not one of ['static']" or "'message' is a required property"
 - Datepicker/Timepicker Rich Asset Content MUST use {"type":"static","message":"Pick a date"}
@@ -5451,32 +3517,25 @@ RIGHT:
 ### CRITICAL: Pipe character | is RESERVED - Never use inside labels!
 - The pipe character | is ONLY for separating button options
 - NEVER put | inside a button label text!
-- This is a VERY COMMON mistake with ranges, counts, and times
+- This is a VERY COMMON mistake with price labels like "$25k"
 
 **WRONG examples (will ALWAYS fail validation):**
-- Small (10-20|people)~310 (pipe before "people" breaks parsing!)
-- Medium (21-50|people)~320 (same issue)
-- 5-10|Minutes Ago~732 (pipe before "Minutes" breaks it!)
-- Over 15|Minutes~733 (pipe inside label)
-- Under $25|k~255 (the | breaks the label)
+- Under $25|k~255 (the | breaks the label - "$25|k" is not valid!)
 - $25|000~100 (pipe inside number)
+- Option|A~200 (pipe inside label text)
+- $35|k-$50|k~265 (multiple pipes inside labels in a range)
 
 **RIGHT examples (correct format):**
-- Small (10-20 people)~310 (use SPACE not pipe!)
-- Medium (21-50 people)~320 (space before "people")
-- 5-10 Minutes Ago~732 (space, not pipe!)
-- Over 15 Minutes~733 (no pipe in label)
 - Under $25k~255 (no pipe in label)
 - $25000~100 (no pipe in number)
+- Option A~200 (space is OK, pipe is NOT)
+- $35k-$50k~265 (use "k" directly after number, no pipe)
 
-**COMMON AI MISTAKES TO AVOID:**
-1. Counts/ranges: "10-20|people" → WRONG! Use "10-20 people"
-2. Time labels: "5-10|Minutes" → WRONG! Use "5-10 Minutes"
-3. Price labels: "$25|k" → WRONG! Use "$25k"
-4. ANY label with | that isn't separating buttons → WRONG!
-
-**The ONLY valid use of | in Rich Asset Content is BETWEEN buttons:**
-- Button1~100|Button2~200|Button3~300 (pipes between buttons ONLY)
+**Pattern to recognize this error:**
+- If you see "Under $25|k" or "$35|k" in button content, the FIX is:
+  - Change "$25|k" to "$25k" (remove the pipe, keep the k)
+  - Change "$35|k" to "$35k"
+  - The "k" means "thousand" and should be attached directly to the number
 
 ### "Global variables must be in all capital letters, numbers or _"
 - Variable column (column 23) values must be ALL_CAPS
@@ -6297,18 +4356,8 @@ Please fix ALL the validation errors listed above and return the corrected CSV. 
             headers,
           };
           
-          // Sanitize body to remove non-ASCII characters that cause ByteString errors
-          // This handles emojis and other special characters that can't be in HTTP payloads
-          const sanitizeForHttp = (str: string): string => {
-            // Remove characters with code points > 127 (non-ASCII)
-            // This prevents "Cannot convert argument to a ByteString" errors
-            return str.replace(/[^\x00-\x7F]/g, '');
-          };
-          
           if (body) {
-            let bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
-            // Sanitize the body string to remove problematic characters
-            options.body = sanitizeForHttp(bodyStr);
+            options.body = typeof body === 'string' ? body : JSON.stringify(body);
           }
           
           console.log(`[BotManager] ${method} ${path}`);
@@ -6337,424 +4386,6 @@ Please fix ALL the validation errors listed above and return the corrected CSV. 
           
           return { ok: response.ok, status: response.status, data };
         };
-        
-        // UX Review API - Intelligent flow analysis and optimization
-        server.middlewares.use('/api/ux-review', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { csv, projectConfig } = JSON.parse(body);
-              
-              if (!csv) {
-                res.statusCode = 400;
-                res.end(JSON.stringify({ error: 'Missing csv' }));
-                return;
-              }
-              
-              const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-              if (!ANTHROPIC_API_KEY) {
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }));
-                return;
-              }
-              
-              console.log(`[UX Review] Starting intelligent UX analysis...`);
-              
-              // Fetch UX best practices from Pypestream docs if available
-              let uxDocsContext = '';
-              const queryDocs = (server as any).queryPypestreamDocs;
-              if (queryDocs) {
-                try {
-                  const uxDocs = await Promise.all([
-                    queryDocs('UX best practices chatbot conversation design', 'search_docs').catch(() => ''),
-                    queryDocs('button labels message length user experience', 'search_docs').catch(() => ''),
-                    queryDocs('error handling recovery flows escalation', 'search_docs').catch(() => ''),
-                  ]);
-                  const validDocs = uxDocs.filter(d => d && d.length > 0);
-                  if (validDocs.length > 0) {
-                    uxDocsContext = `\n\n## PYPESTREAM UX BEST PRACTICES (From Official Docs)\n\n${validDocs.join('\n\n---\n\n')}`;
-                  }
-                } catch (e) {
-                  console.log(`[UX Review] Could not fetch docs:`, e);
-                }
-              }
-              
-              const systemPrompt = `You are a brutally honest UX critic and conversational design expert. Your job is to make this bot feel INTELLIGENT and HUMAN.
-
-## YOUR CRITICAL MISSION
-You must think through the ENTIRE user experience as if YOU were a frustrated customer trying to get help. Ask yourself:
-- "Why is this button here? Does it make sense in context?"
-- "Would a real person say this? Or does it sound like a robot?"
-- "After I click this, what happens? Does it feel logical?"
-- "Am I being given options that actually help me, or random choices?"
-
-## COMMON PROBLEMS TO RUTHLESSLY FIX
-
-### 1. ILLOGICAL BUTTON OPTIONS (CRITICAL - MOST COMMON ERROR!)
-BAD: Offering "Back to Menu" and "Talk to Agent" when user just asked about something specific
-Example: Bot asks "What type of product are you looking for?" → Buttons are [Back to Menu] [Talk to Agent]
-WHY BAD: These buttons don't answer the question! User can't select a product type!
-FIX: Buttons must BE THE ANSWERS: [Office Supplies] [Electronics] [Furniture] [Ink & Toner]
-
-BAD: First node of a flow has only escape options
-Example: "How can I help with your order?" → [Back to Menu] [Talk to Agent]
-WHY BAD: User clicked to get order help - these buttons don't help!
-FIX: [Track Order] [Return Item] [Change Order] [Cancel Order]
-
-BAD: Buttons that don't match the question asked
-Example: Message says "What type of reservation?" but buttons are "Continue" and "Cancel"
-FIX: Buttons must directly answer the question (e.g., "Campsite", "Day Use", "Group Reservation")
-
-RULE: If a message asks a question, the buttons MUST be possible answers to that question!
-RULE: "Back to Menu" and "Talk to Agent" should appear at END of flows or in error states, NOT at the start!
-
-### 2. ROBOTIC OR UNINTELLIGENT COPY (CRITICAL)
-BAD: "Please select an option from the choices below."
-WHY BAD: No human talks like this. It's filler text that wastes the user's time.
-FIX: Get straight to the point: "What would you like to do?"
-
-BAD: "Your request has been received. We will process it accordingly."
-FIX: "Got it! I'm looking that up for you now." (warm, human, specific)
-
-BAD: "Please enter your email address in the field below."
-FIX: "What's your email?" (conversational, direct)
-
-BAD: Starting messages with "Welcome to [X]! We're here to help you with [Y]."
-FIX: Just ask what they need: "Hey! What can I help you with today?"
-
-### 3. FLOW LOGIC PROBLEMS (MAJOR)
-BAD: Asking the same question twice in different ways
-BAD: Jumping from one topic to another without acknowledgment
-BAD: Not confirming important user inputs before proceeding
-BAD: Offering options that lead nowhere or loop back confusingly
-FIX: Each step should feel like natural conversation progression
-
-### 4. BUTTON COUNT AND HIERARCHY
-BAD: 7+ buttons overwhelming the user
-BAD: Most important action buried at the bottom
-BAD: "Back" or "Cancel" more prominent than the main action
-FIX: 3-5 buttons max, primary action first and most prominent
-
-### 5. CONTEXT AWARENESS
-BAD: Buttons/messages that ignore what the user just said or selected
-GOOD: "Great choice! For your campsite reservation, which park are you interested in?"
-The bot should acknowledge and build on previous selections.
-
-### 6. BACK TO MENU ROUTING (CRITICAL)
-The bot has TWO menu nodes:
-- Node 200 = Main Menu (primary options: "What can I help with?")
-- Node 201 = Return Menu (end of flow: "Is there anything else?")
-
-BAD: "Back to Menu" button routes to node 201 (Return Menu)
-WHY BAD: User expects to go back to the MAIN options, not "anything else?"
-FIX: "Back to Menu" must ALWAYS route to node 200
-
-BAD: Showing "Back to Menu" immediately after welcome or on node 201 itself
-WHY BAD: You're already at the menu!
-FIX: Only show "Back to Menu" in the middle of flows, not at menu nodes
-
-## PYPESTREAM CSV FORMAT
-26 columns: Node Number, Node Type (D=Decision/A=Action), Node Name, Intent, Entity Type, Entity, NLU Disabled?, Next Nodes, Message, Rich Asset Type, Rich Asset Content, Answer Required?, Behaviors, Command, Description, Output, Node Input, Parameter Input, Decision Variable, What Next?, Node Tags, Skill Tag, Variable, Platform Flag, Flows, CSS Classname
-
-Button format in Rich Asset Content: {"type":"static","options":[{"label":"Button Text","dest":123}]}
-
-${uxDocsContext}
-
-## OUTPUT FORMAT - BE AGGRESSIVE WITH IMPROVEMENTS
-You MUST provide concrete improvements. Don't just identify problems - FIX THEM.
-
-Return a JSON object:
-{
-  "overallScore": 1-10,
-  "summary": "Brutally honest 1-sentence assessment",
-  "criticalFlaws": ["The 2-3 biggest problems that make users frustrated"],
-  "issues": [
-    {
-      "severity": "critical|major|minor",
-      "nodeNum": 123,
-      "issue": "Specific problem",
-      "suggestion": "Exactly how to fix it",
-      "category": "buttons|copy|flow-logic|dead-end|context"
-    }
-  ],
-  "improvements": [
-    {
-      "nodeNum": 123,
-      "field": "Message",
-      "currentValue": "The robotic text currently there",
-      "suggestedValue": "The human, intelligent replacement",
-      "reason": "Why this is better"
-    },
-    {
-      "nodeNum": 123,
-      "field": "Rich Asset Content",
-      "currentValue": "current buttons JSON",
-      "suggestedValue": "improved buttons JSON with better labels and logical options",
-      "reason": "Why these buttons make more sense"
-    }
-  ],
-  "rewrittenMessages": {
-    "123": "Complete rewritten message for node 123",
-    "456": "Complete rewritten message for node 456"
-  },
-  "rewrittenButtons": {
-    "123": {"type":"static","options":[{"label":"Better Label","dest":200}]}
-  }
-}`;
-
-              const userPrompt = `CRITICALLY analyze this bot and FIX the user experience problems.
-
-## CONTEXT
-This is a ${projectConfig?.projectType || 'customer service'} bot for ${projectConfig?.targetCompany || projectConfig?.clientName || 'a company'}.
-Project: ${projectConfig?.projectName || 'Unknown'}
-
-## YOUR TASK
-1. Read through EVERY node and trace the user journey
-2. For each decision node with buttons, ask: "Do these buttons make sense here? Would a user know which to click?"
-3. For each message, ask: "Does this sound like a helpful human or a clunky robot?"
-4. Identify where the flow breaks down or feels illogical
-5. REWRITE problematic messages and buttons with better alternatives
-
-## CRITICAL QUESTIONS TO ANSWER
-- After the welcome message, are the button options logical for what users would actually want?
-- When buttons say "Back to Menu" or "Talk to Agent" - is that what users actually need at that moment, or should there be more helpful options?
-- Does each message build naturally on what came before?
-- Would YOU feel frustrated using this bot?
-
-## CSV TO ANALYZE
-\`\`\`csv
-${csv}
-\`\`\`
-
-BE HARSH. BE SPECIFIC. PROVIDE COMPLETE REWRITES for bad messages and buttons.
-Return your analysis as JSON with the improvements field populated with EVERY fix needed.`;
-
-              // Call Anthropic API
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': ANTHROPIC_API_KEY,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-sonnet-4-20250514',
-                  max_tokens: 8000,
-                  messages: [
-                    { role: 'user', content: userPrompt }
-                  ],
-                  system: systemPrompt
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                console.log(`[UX Review] API error: ${response.status} - ${errorText}`);
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: `AI API error: ${response.status}` }));
-                return;
-              }
-              
-              const aiResponse = await response.json();
-              const content = aiResponse.content?.[0]?.text || '';
-              
-              // Extract JSON from response
-              let analysis;
-              try {
-                // Try to find JSON in the response
-                const jsonMatch = content.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                  analysis = JSON.parse(jsonMatch[0]);
-                } else {
-                  analysis = { raw: content, error: 'Could not parse JSON response' };
-                }
-              } catch (parseErr) {
-                console.log(`[UX Review] JSON parse error:`, parseErr);
-                analysis = { raw: content, error: 'Failed to parse AI response' };
-              }
-              
-              console.log(`[UX Review] Analysis complete. Score: ${analysis.overallScore || 'N/A'}, Issues: ${analysis.issues?.length || 0}`);
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({
-                success: true,
-                analysis
-              }));
-              
-            } catch (err: any) {
-              console.error('[UX Review] Error:', err);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: err.message || 'UX review failed' }));
-            }
-          });
-        });
-        
-        // Apply UX improvements to CSV
-        server.middlewares.use('/api/ux-apply', async (req, res, next) => {
-          if (req.method !== 'POST') { next(); return; }
-          
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-          
-          if (req.method === 'OPTIONS') {
-            res.statusCode = 200;
-            res.end();
-            return;
-          }
-          
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', async () => {
-            try {
-              const { csv, improvements, rewrittenMessages, rewrittenButtons, projectConfig } = JSON.parse(body);
-              
-              if (!csv) {
-                res.statusCode = 400;
-                res.end(JSON.stringify({ error: 'Missing csv' }));
-                return;
-              }
-              
-              // Count total fixes
-              const improvementCount = (improvements?.length || 0) + 
-                Object.keys(rewrittenMessages || {}).length + 
-                Object.keys(rewrittenButtons || {}).length;
-              
-              if (improvementCount === 0) {
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({ success: true, csv, appliedCount: 0 }));
-                return;
-              }
-              
-              const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-              if (!ANTHROPIC_API_KEY) {
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }));
-                return;
-              }
-              
-              console.log(`[UX Apply] Applying ${improvementCount} improvements...`);
-              
-              const systemPrompt = `You are a Pypestream CSV editor. Your job is to apply UX improvements to make the bot more human and intelligent.
-
-## CSV FORMAT RULES
-- 26 columns exactly: Node Number, Node Type, Node Name, Intent, Entity Type, Entity, NLU Disabled?, Next Nodes, Message, Rich Asset Type, Rich Asset Content, Answer Required?, Behaviors, Command, Description, Output, Node Input, Parameter Input, Decision Variable, What Next?, Node Tags, Skill Tag, Variable, Platform Flag, Flows, CSS Classname
-- Column indices: Message is column 9 (index 8), Rich Asset Content is column 11 (index 10)
-- Preserve all nodes and their structure - only modify the specified fields
-- Keep the header row exactly as-is
-- Quote fields that contain commas using double quotes
-- Escape double quotes inside quoted fields by doubling them
-- Never use * or = in message text (reserved Pypestream characters)
-- For Rich Asset Content (buttons), the format is: {"type":"static","options":[{"label":"Text","dest":123}]}
-
-## CRITICAL: Apply ALL specified changes
-- For rewrittenMessages: Replace the Message column (9th column) for each specified node
-- For rewrittenButtons: Replace the Rich Asset Content column (11th column) for each specified node
-- For improvements: Apply the suggestedValue to the specified field
-
-Return ONLY the complete, fixed CSV. No explanations, no markdown code blocks, just the raw CSV content starting with "Node Number,Node Type,..."`;
-
-              // Build the changes list
-              let changesDescription = '';
-              
-              if (rewrittenMessages && Object.keys(rewrittenMessages).length > 0) {
-                changesDescription += `\n\n## MESSAGE REWRITES (Replace Message column for these nodes)\n`;
-                for (const [nodeNum, newMessage] of Object.entries(rewrittenMessages)) {
-                  changesDescription += `Node ${nodeNum}: "${newMessage}"\n`;
-                }
-              }
-              
-              if (rewrittenButtons && Object.keys(rewrittenButtons).length > 0) {
-                changesDescription += `\n\n## BUTTON REWRITES (Replace Rich Asset Content column for these nodes)\n`;
-                for (const [nodeNum, newButtons] of Object.entries(rewrittenButtons)) {
-                  changesDescription += `Node ${nodeNum}: ${JSON.stringify(newButtons)}\n`;
-                }
-              }
-              
-              if (improvements && improvements.length > 0) {
-                changesDescription += `\n\n## OTHER IMPROVEMENTS\n${JSON.stringify(improvements, null, 2)}`;
-              }
-
-              const userPrompt = `Apply these UX improvements to the CSV:
-${changesDescription}
-
-## CURRENT CSV
-${csv}
-
-Apply ALL the changes above and return the complete updated CSV.`;
-
-              const response = await fetch('https://api.anthropic.com/v1/messages', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'x-api-key': ANTHROPIC_API_KEY,
-                  'anthropic-version': '2023-06-01'
-                },
-                body: JSON.stringify({
-                  model: 'claude-sonnet-4-20250514',
-                  max_tokens: 16000,
-                  messages: [
-                    { role: 'user', content: userPrompt }
-                  ],
-                  system: systemPrompt
-                })
-              });
-              
-              if (!response.ok) {
-                const errorText = await response.text();
-                console.log(`[UX Apply] API error: ${response.status} - ${errorText}`);
-                res.statusCode = 500;
-                res.end(JSON.stringify({ error: `AI API error: ${response.status}` }));
-                return;
-              }
-              
-              const aiResponse = await response.json();
-              let fixedCSV = aiResponse.content?.[0]?.text || '';
-              
-              // Clean up the response - remove any markdown code blocks
-              fixedCSV = fixedCSV.replace(/```csv\n?/gi, '').replace(/```\n?/g, '').trim();
-              
-              // Validate the CSV has the header
-              if (!fixedCSV.includes('Node Number') || !fixedCSV.includes('Node Type')) {
-                console.log(`[UX Apply] Invalid CSV returned, using original`);
-                res.setHeader('Content-Type', 'application/json');
-                res.end(JSON.stringify({
-                  success: false,
-                  error: 'AI returned invalid CSV',
-                  csv: csv
-                }));
-                return;
-              }
-              
-              console.log(`[UX Apply] Successfully applied improvements`);
-              
-              res.setHeader('Content-Type', 'application/json');
-              res.end(JSON.stringify({
-                success: true,
-                csv: fixedCSV,
-                appliedCount: improvements.length
-              }));
-              
-            } catch (err: any) {
-              console.error('[UX Apply] Error:', err);
-              res.statusCode = 500;
-              res.end(JSON.stringify({ error: err.message || 'Failed to apply improvements' }));
-            }
-          });
-        });
         
         // Validate CSV via Bot Manager API
         server.middlewares.use('/api/botmanager/validate', async (req, res, next) => {
@@ -7081,60 +4712,6 @@ Apply ALL the changes above and return the complete updated CSV.`;
               console.log(`[BotManager] Uploading CSV to: ${targetVersionId}`);
               console.log(`[BotManager] Scripts received:`, scripts ? scripts.map((s: any) => s.name) : 'none');
               
-              // CRITICAL: If no scripts provided, auto-load critical startup scripts
-              // This is a safeguard to ensure bots always have required scripts
-              let scriptsToUpload = scripts || [];
-              if (scriptsToUpload.length === 0) {
-                console.log('[BotManager] No scripts provided - auto-loading critical startup scripts');
-                const CRITICAL_SCRIPTS = ['HandleBotError', 'UserPlatformRouting', 'GenAIFallback'];
-                
-                // Inline script loading (same logic as getScriptContent but defined here for scope safety)
-                const SUPABASE_SCRIPTS_ENDPOINT = 'https://jcsfggahtaewgqytvgau.supabase.co/functions/v1/sd-action-scripts';
-                
-                for (const scriptName of CRITICAL_SCRIPTS) {
-                  try {
-                    let content: string | null = null;
-                    
-                    // First try Supabase
-                    try {
-                      const response = await fetch(`${SUPABASE_SCRIPTS_ENDPOINT}/${encodeURIComponent(scriptName)}`);
-                      if (response.ok) {
-                        const data = await response.json();
-                        if (data.script?.content) {
-                          content = data.script.content;
-                          console.log(`[BotManager] Fetched ${scriptName} from Supabase`);
-                        }
-                      }
-                    } catch (e) {
-                      console.log(`[BotManager] Supabase fetch failed for ${scriptName}, trying local file`);
-                    }
-                    
-                    // Fall back to local file
-                    if (!content) {
-                      const scriptFileName = scriptName.endsWith('.py') ? scriptName : `${scriptName}.py`;
-                      const scriptPath = path.join(process.cwd(), '..', 'Official-Action-Nodes', scriptFileName);
-                      try {
-                        content = await fs.promises.readFile(scriptPath, 'utf-8');
-                        console.log(`[BotManager] Read ${scriptName} from local file`);
-                      } catch (e) {
-                        console.log(`[BotManager] Local file not found: ${scriptPath}`);
-                      }
-                    }
-                    
-                    if (content) {
-                      scriptsToUpload.push({ name: scriptName, content });
-                      console.log(`[BotManager] Auto-loaded critical script: ${scriptName}`);
-                    } else {
-                      console.warn(`[BotManager] Could not auto-load script: ${scriptName}`);
-                    }
-                  } catch (e) {
-                    console.warn(`[BotManager] Error loading script ${scriptName}:`, e);
-                  }
-                }
-                
-                console.log(`[BotManager] Auto-loaded ${scriptsToUpload.length} critical scripts`);
-              }
-              
               // Upload the CSV template
               let uploadResult = await botManagerRequest(
                 'PUT',
@@ -7275,10 +4852,10 @@ Apply ALL the changes above and return the complete updated CSV.`;
               }
               
               // Upload any action node scripts using multipart form data
-              if (scriptsToUpload && scriptsToUpload.length > 0) {
-                console.log(`[BotManager] Uploading ${scriptsToUpload.length} action node scripts to ${targetVersionId}`);
+              if (scripts && scripts.length > 0) {
+                console.log(`[BotManager] Uploading ${scripts.length} action node scripts to ${targetVersionId}`);
                 
-                for (const script of scriptsToUpload) {
+                for (const script of scripts) {
                   const scriptFileName = script.name.endsWith('.py') ? script.name : `${script.name}.py`;
                   console.log(`[BotManager] Uploading script: ${scriptFileName}`);
                   
@@ -7336,84 +4913,6 @@ Apply ALL the changes above and return the complete updated CSV.`;
                     console.error(`[BotManager] Script upload error for ${script.name}:`, e.message);
                   }
                 }
-              }
-              
-              // CRITICAL: Auto-generate and upload app.py config file
-              // This is REQUIRED for action nodes to access API keys via app.PARAMS
-              console.log('[BotManager] Auto-generating and uploading app.py config...');
-              try {
-                const FormData = (await import('form-data')).default;
-                const https = await import('https');
-                
-                // Generate app.py with Pypestream's shared OpenAI API key
-                const pypestreamOpenAIKey = process.env.VITE_PYPESTREAM_OPENAI_KEY || '';
-                const appPyContent = `import os
-
-NAME = '${botId}'
-
-BOTS = []
-
-CSV_BOTS = ['${botId}']
-
-PATH = os.path.dirname(__file__)
-
-PARAMS = {
-    "sandbox": {
-        "openai_api_key": "${pypestreamOpenAIKey}",
-        "sentry_dsn": "https://62ff156d79c7b9241720b513af77e06f@o4509032988344320.ingest.us.sentry.io/4509159116046336",
-    },
-    "live": {
-        "openai_api_key": "${pypestreamOpenAIKey}",
-        "sentry_dsn": "https://62ff156d79c7b9241720b513af77e06f@o4509032988344320.ingest.us.sentry.io/4509159116046336",
-    }
-}
-`;
-                
-                const configFormData = new FormData();
-                configFormData.append('configFile', Buffer.from(appPyContent, 'utf-8'), {
-                  filename: 'app.py',
-                  contentType: 'text/x-python',
-                });
-                
-                const configUploadResult = await new Promise<{ ok: boolean; status: number; data: any }>((resolve) => {
-                  const configReq = https.request(
-                    {
-                      hostname: 'api.pypestream.com',
-                      path: `/botmanager/versions/${targetVersionId}/config`,
-                      method: 'POST',
-                      headers: {
-                        'Authorization': `Bearer ${token}`,
-                        ...configFormData.getHeaders(),
-                      },
-                    },
-                    (configRes) => {
-                      let body = '';
-                      configRes.on('data', (chunk) => { body += chunk; });
-                      configRes.on('end', () => {
-                        try {
-                          const data = JSON.parse(body);
-                          resolve({ ok: configRes.statusCode === 200, status: configRes.statusCode || 500, data });
-                        } catch {
-                          resolve({ ok: configRes.statusCode === 200, status: configRes.statusCode || 500, data: body });
-                        }
-                      });
-                    }
-                  );
-                  
-                  configReq.on('error', (e) => {
-                    resolve({ ok: false, status: 500, data: { error: e.message } });
-                  });
-                  
-                  configFormData.pipe(configReq);
-                });
-                
-                if (configUploadResult.ok) {
-                  console.log('[BotManager] ✅ app.py config uploaded successfully');
-                } else {
-                  console.warn('[BotManager] ⚠️ app.py upload failed:', configUploadResult.status, configUploadResult.data);
-                }
-              } catch (configError: any) {
-                console.error('[BotManager] app.py upload error:', configError.message);
               }
               
               // If environment is provided, also deploy in one step
@@ -9164,10 +6663,7 @@ textarea#ps-textinput-textarea:disabled::placeholder {
               
               // For avatar specifically, prefer SQUARE icon over wide wordmark
               // Icons work better in circular avatar than horizontal logos
-              // IMPORTANT: Only use Brandfetch if we find an actual square icon/symbol
-              // Wide wordmarks don't display well in circular avatars
-              let avatarLogoUrl = logoUrl; // default to main logo (for widget config)
-              let foundSquareIcon = false;
+              let avatarLogoUrl = logoUrl; // default to main logo
               if (brandAssets?.logos && Array.isArray(brandAssets.logos)) {
                 const iconPriority = [
                   brandAssets.logos.find((l: any) => l.type === 'icon' && l.format === 'png'),
@@ -9179,18 +6675,16 @@ textarea#ps-textinput-textarea:disabled::placeholder {
                 const squareIcon = iconPriority.find(l => l?.url);
                 if (squareIcon?.url) {
                   avatarLogoUrl = squareIcon.url;
-                  foundSquareIcon = true;
                   console.log('[Channel] Using square icon for avatar:', avatarLogoUrl);
                 }
               }
               
-              // For CSS avatar: only use Brandfetch if we found a square icon
-              // Wide wordmarks don't work in circular avatars - use Google Favicon instead
-              // Remove ALL non-alphanumeric chars (spaces, apostrophes, etc.) for valid domain
-              const companyDomain = targetCompany?.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+              // Brandfetch blocks hotlinking, so use Google Favicon API instead
+              // This provides a small (1-2KB) favicon that allows cross-origin access
+              const companyDomain = targetCompany?.toLowerCase().replace(/\s+/g, '') + '.com';
               const googleFaviconUrl = `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http://${companyDomain}&size=128`;
-              const avatarLogoForCSS = foundSquareIcon ? avatarLogoUrl : googleFaviconUrl;
-              console.log('[Channel] Avatar for CSS:', avatarLogoForCSS, foundSquareIcon ? '(square icon from Brandfetch)' : '(Google Favicon - no square icon available)');
+              const avatarLogoForCSS = googleFaviconUrl;
+              console.log('[Channel] Using Google Favicon for avatar:', avatarLogoForCSS);
               
               const brandMomentUrl = brandAssets?.brandMomentUrl || '';
               const companyName = targetCompany || brandAssets?.name || botName;

@@ -35,6 +35,15 @@ export interface FailedRow {
   fields?: Record<string, string>;
 }
 
+// Health check result from post-deployment verification
+export interface HealthCheckResult {
+  healthy: boolean;
+  firstMessage?: string;
+  errorDetected: boolean;
+  errorType?: 'technical_difficulties' | 'no_agents' | 'unknown';
+  details?: string;
+}
+
 // Result from instant build pipeline
 export interface InstantBuildResult {
   success: boolean;
@@ -56,10 +65,12 @@ export interface InstantBuildResult {
   humanInterventionContext?: string;
   // Failed rows for manual debugging/fixing
   failedRows?: FailedRow[];
+  // Post-deployment health check result
+  healthCheck?: HealthCheckResult;
 }
 
 // Instant flow step type
-export type InstantStep = 'create' | 'confirm' | 'processing' | 'results' | 'editor';
+export type InstantStep = 'create' | 'confirm' | 'architecture' | 'processing' | 'results' | 'editor';
 
 // Brand assets from Brandfetch API
 export interface BrandColor {
@@ -118,6 +129,8 @@ export interface ProjectConfig {
   importedRequirements?: ImportedRequirements;
   targetCompany?: string;    // The actual company/brand (e.g., "Travelers Insurance")
   brandAssets?: BrandAssets; // Auto-detected from targetCompany via Brandfetch
+  companyContext?: string;   // Company-specific knowledge for AI fallback
+  botPersona?: string;       // Bot personality/persona for AI responses
 }
 
 export interface FileUpload {
@@ -186,6 +199,39 @@ export interface RequirementQuestion {
 // Requirements answers (question id -> selected option ids)
 export type RequirementsAnswers = Record<string, string[]>;
 
+// Architecture editor state - saved to allow resuming work
+export interface ArchitectureState {
+  // Planned flows from the architecture review
+  plannedFlows?: Array<{
+    name: string;
+    label?: string;
+    description: string;
+    startNode: number;
+  }>;
+  // Main menu options
+  menuOptions?: Array<{
+    label: string;
+    description?: string;
+    flowName?: string;
+  }>;
+  // Node positions in the visual editor (for exact restoration)
+  nodePositions?: Record<string, { x: number; y: number }>;
+  // Flow previews (conversation structures the user has seen/approved)
+  flowPreviews?: Record<string, any[]>;
+  // Whether generation has completed
+  hasGenerated?: boolean;
+  // Extracted project details
+  extractedDetails?: ExtractedDetails;
+  // Brand assets
+  brandAssets?: BrandAssets;
+  // Target company name (for generation context)
+  targetCompany?: string;
+  // Current instant step
+  instantStep?: InstantStep;
+  // Build result from generation (for View Solution popup)
+  instantBuildResult?: InstantBuildResult;
+}
+
 // Saved solution for dashboard
 export interface SavedSolution {
   id: string;
@@ -205,10 +251,17 @@ export interface SavedSolution {
   requirementsAnswers?: RequirementsAnswers;
   // Generated content
   csvContent?: string;
+  csv?: string; // Alias for csvContent (for compatibility)
   // External links
   spreadsheetUrl?: string;
   botUrl?: string;
   widgetUrl?: string;
+  // Deployment details
+  widgetId?: string;
+  botId?: string;
+  versionId?: string;
+  // Architecture editor state (for resuming work)
+  architectureState?: ArchitectureState;
 }
 
 export interface ValidationResult {
@@ -290,4 +343,70 @@ export interface AppState {
   user: UserProfile;
   sidebarOpen: boolean;
   solutionsLoaded: boolean;
+}
+
+// ============================================
+// Live Edit Types
+// ============================================
+
+// Message from the bot conversation
+export interface ConversationMessage {
+  id: string;
+  text: string;
+  fromSide: 'bot' | 'user';
+  timestamp: Date;
+  richAssetType?: string;
+  richAssetContent?: any;
+  nodeNum?: number;
+}
+
+// Current context of the conversation for the edit engine
+export interface ConversationContext {
+  messages: ConversationMessage[];
+  lastBotMessage?: ConversationMessage;
+  lastUserMessage?: ConversationMessage;
+  currentNodeNum?: number;
+  sessionActive: boolean;
+  summary?: string;
+}
+
+// Edit request from the user
+export interface EditRequest {
+  instruction: string;
+  context: ConversationContext;
+  currentCsv: string;
+  currentScripts: CustomScript[];
+  targetNodeNum?: number;
+}
+
+// Result of an edit operation
+export interface EditResult {
+  success: boolean;
+  modifiedCsv: string;
+  modifiedScripts?: CustomScript[];
+  changesSummary: string;
+  affectedNodes: number[];
+  error?: string;
+}
+
+// Editor chat message
+export interface EditorMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: Date;
+  editResult?: EditResult;
+  isLoading?: boolean;
+}
+
+// Live edit session state
+export interface LiveEditSession {
+  solutionId: string;
+  botId: string;
+  widgetId: string;
+  widgetUrl: string;
+  csv: string;
+  scripts: CustomScript[];
+  versionId?: string;
+  editHistory: EditResult[];
 }

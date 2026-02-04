@@ -1,9 +1,129 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useStore } from '../store/useStore';
 import { instantBuild, InstantBuildProgress } from '../services/instant-build';
-import { Loader2, Check, AlertCircle, Sparkles, Database, Shield, Rocket, FileSpreadsheet, Key, Copy, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
-import { GameSelector } from '../components/games';
+import { Loader2, Check, AlertCircle, Sparkles, Database, Shield, Rocket, FileSpreadsheet, Key, Copy, CheckCircle2, ChevronDown, ChevronUp, Clock } from 'lucide-react';
+import { FlowchartProgress } from '../components/FlowchartProgress';
 import type { InstantBuildResult } from '../types';
+
+// Typical ranges based on observed builds (conservative estimates)
+const STEP_DESCRIPTIONS: Record<string, string> = {
+  generating: 'AI generation (typically longest)',
+  validating: 'Validation and refinement',
+  deploying: 'Deployment and widget creation',
+  exporting: 'Google Sheets export',
+};
+
+const TOTAL_RANGE = { min: 30, max: 90 }; // Total pipeline typical range in seconds
+
+// localStorage key for build timing history
+const BUILD_TIMINGS_KEY = 'solution_builder_timings';
+
+interface BuildTiming {
+  date: number;
+  totalMs: number;
+}
+
+/**
+ * Save a successful build timing to localStorage
+ */
+export function saveBuildTiming(totalMs: number): void {
+  try {
+    const history: BuildTiming[] = JSON.parse(localStorage.getItem(BUILD_TIMINGS_KEY) || '[]');
+    history.push({ date: Date.now(), totalMs });
+    // Keep last 10 builds
+    localStorage.setItem(BUILD_TIMINGS_KEY, JSON.stringify(history.slice(-10)));
+    console.log(`[Timing] Saved build timing: ${(totalMs / 1000).toFixed(1)}s`);
+  } catch (e) {
+    console.warn('[Timing] Failed to save build timing:', e);
+  }
+}
+
+/**
+ * Get the user's average build time based on history
+ * Returns null if not enough data (less than 3 builds)
+ */
+function getAverageFromHistory(): number | null {
+  try {
+    const history: BuildTiming[] = JSON.parse(localStorage.getItem(BUILD_TIMINGS_KEY) || '[]');
+    if (history.length < 3) return null; // Not enough data for reliable estimate
+    
+    const totals = history.map(h => h.totalMs);
+    const avgMs = totals.reduce((a, b) => a + b, 0) / totals.length;
+    return Math.round(avgMs / 1000);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * TimeEstimate - Shows elapsed time and typical completion range
+ * Uses elapsed time (a fact) rather than countdown (speculation) to avoid misleading users
+ */
+function TimeEstimate({ 
+  step, 
+  pipelineStartedAt 
+}: { 
+  step: string; 
+  pipelineStartedAt?: number;
+}) {
+  const [elapsed, setElapsed] = useState(0);
+  const [historicalAvg, setHistoricalAvg] = useState<number | null>(null);
+  
+  useEffect(() => {
+    // Load historical average on mount
+    setHistoricalAvg(getAverageFromHistory());
+  }, []);
+  
+  useEffect(() => {
+    if (!pipelineStartedAt) return;
+    
+    // Update elapsed time every second
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((performance.now() - pipelineStartedAt) / 1000));
+    }, 1000);
+    
+    // Calculate initial elapsed time
+    setElapsed(Math.floor((performance.now() - pipelineStartedAt) / 1000));
+    
+    return () => clearInterval(interval);
+  }, [pipelineStartedAt]);
+  
+  // Don't show if no timing data or step is done/error
+  if (!pipelineStartedAt || step === 'done' || step === 'error') {
+    return null;
+  }
+  
+  const stepDescription = STEP_DESCRIPTIONS[step] || step;
+  
+  // Format elapsed time
+  const formatTime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${secs}s`;
+  };
+  
+  return (
+    <div className="mt-6 text-center">
+      <div className="flex items-center justify-center gap-2 text-[#a5b4fc]">
+        <Clock className="w-4 h-4" />
+        <span className="text-sm font-medium">Elapsed: {formatTime(elapsed)}</span>
+      </div>
+      {historicalAvg ? (
+        <p className="text-xs text-[#6a6a75] mt-2">
+          Your builds usually take about {historicalAvg} seconds
+        </p>
+      ) : (
+        <p className="text-xs text-[#6a6a75] mt-2">
+          Solutions typically complete in {TOTAL_RANGE.min}-{TOTAL_RANGE.max} seconds
+        </p>
+      )}
+      <p className="text-xs text-[#4a4a55] mt-1">
+        Current: {stepDescription}
+      </p>
+    </div>
+  );
+}
 
 /**
  * ProcessingPage - Shows progress during instant build pipeline
@@ -95,6 +215,12 @@ export function ProcessingPage() {
       // Clear cache on success
       cachedGenerationRef.current = null;
       setInstantBuildResult(result);
+      
+      // Save build timing for future estimates
+      if (progress.pipelineStartedAt) {
+        const totalMs = Math.round(performance.now() - progress.pipelineStartedAt);
+        saveBuildTiming(totalMs);
+      }
       
       // Save to Supabase for cross-device access and permanent storage
       const solutionData = {
@@ -387,11 +513,25 @@ export function ProcessingPage() {
               </p>
             )}
           </div>
+          
+          {/* Time estimate with elapsed timer */}
+          <TimeEstimate 
+            step={progress.step} 
+            pipelineStartedAt={progress.pipelineStartedAt} 
+          />
+          
+          {/* Cancel button */}
+          <button
+            onClick={handleBack}
+            className="mt-6 px-4 py-2 text-sm text-[#6a6a75] hover:text-white transition-colors"
+          >
+            Cancel
+          </button>
         </div>
         
-        {/* Right: Games Card (hidden on mobile) */}
-        <div className="hidden lg:flex bg-[#12121a] border border-white/[0.08] rounded-2xl p-8 items-center justify-center">
-          <GameSelector />
+        {/* Right: Flowchart Progress (hidden on mobile) */}
+        <div className="hidden lg:flex bg-[#12121a] border border-white/[0.08] rounded-2xl p-8 items-center justify-center min-h-[500px]">
+          <FlowchartProgress sequentialProgress={progress.sequentialProgress} />
         </div>
       </div>
     </div>

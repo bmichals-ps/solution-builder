@@ -7,6 +7,43 @@
  * - Conflict detection
  */
 
+/**
+ * Export CSV content to a new Google Sheet
+ */
+export async function exportToSheets(csv: string, sheetName: string): Promise<{
+  success: boolean;
+  spreadsheetUrl?: string;
+  spreadsheetId?: string;
+  error?: string;
+}> {
+  try {
+    const response = await fetch('/api/composio/create-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: sheetName,
+        csvContent: csv,
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Create sheet failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    return {
+      success: true,
+      spreadsheetUrl: data.spreadsheetUrl || data.url,
+      spreadsheetId: data.spreadsheetId || data.id,
+    };
+  } catch (error: any) {
+    console.error('[exportToSheets] Error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Simple hash function for change detection
 function hashCSV(csv: string): string {
   let hash = 0;

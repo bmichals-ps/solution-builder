@@ -19,7 +19,7 @@ export interface FigmaAnalysis {
 }
 
 // Supabase project URL
-const SUPABASE_URL = 'https://lkjxlgvqlcvlupyqjvpv.supabase.co';
+const SUPABASE_URL = 'https://jcsfggahtaewgqytvgau.supabase.co';
 
 /**
  * Analyze a Figma file by its key via Supabase Edge Function

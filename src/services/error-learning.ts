@@ -195,10 +195,8 @@ function parseCSVLine(line: string): string[] {
 }
 
 // ============================================
-// API FUNCTIONS
+// API FUNCTIONS (Direct Supabase Client)
 // ============================================
-
-const EDGE_FUNCTION_URL = '/functions/v1/sd-error-learning';
 
 // Track consecutive failures to avoid spamming on temporary outages
 let consecutiveFailures = 0;
@@ -234,6 +232,7 @@ function recordFailure(): void {
 
 /**
  * Log an error pattern (creates or increments occurrence count)
+ * Uses upsert to increment occurrence_count if pattern already exists
  */
 export async function logErrorPattern(
   error: ValidationError,
@@ -247,39 +246,64 @@ export async function logErrorPattern(
   try {
     const signature = normalizeError(error);
     const errorType = categorizeError(error);
-    const fieldName = error.field_name || error.err_msgs?.[0]?.field_name;
+    const fieldName = error.field_name || error.err_msgs?.[0]?.field_name || null;
     const description = error.error_description || error.err_msgs?.[0]?.error_description || '';
     const nodeContext = csv ? extractNodeContext(csv, error.node_num) : null;
     
     console.log(`[SELF-IMPROVE] 📝 Logging error pattern: ${errorType} (${signature})`);
     
-    const { data: session } = await supabase.auth.getSession();
-    const response = await fetch(`${EDGE_FUNCTION_URL}/patterns`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-      },
-      body: JSON.stringify({
+    // Check if pattern already exists
+    const { data: existing } = await supabase
+      .from('error_patterns')
+      .select('id, occurrence_count, node_context')
+      .eq('error_signature', signature)
+      .single();
+    
+    if (existing) {
+      // Increment occurrence count
+      const { error: updateError } = await supabase
+        .from('error_patterns')
+        .update({
+          occurrence_count: existing.occurrence_count + 1,
+          last_seen_at: new Date().toISOString(),
+          node_context: nodeContext || existing.node_context,
+        })
+        .eq('id', existing.id);
+      
+      if (updateError) {
+        recordFailure();
+        console.warn('[SELF-IMPROVE] ❌ Failed to update error pattern:', updateError);
+        return null;
+      }
+      
+      recordSuccess();
+      console.log(`[SELF-IMPROVE] ✅ Error pattern updated (count: ${existing.occurrence_count + 1}): ${existing.id}`);
+      return existing.id.toString();
+    }
+    
+    // Insert new pattern
+    const { data: newPattern, error: insertError } = await supabase
+      .from('error_patterns')
+      .insert({
         error_signature: signature,
         error_type: errorType,
         field_name: fieldName,
         error_description: description,
         node_context: nodeContext,
-      }),
-    });
+        occurrence_count: 1,
+      })
+      .select('id')
+      .single();
     
-    if (!response.ok) {
+    if (insertError) {
       recordFailure();
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-      console.warn('[SELF-IMPROVE] ❌ Failed to log error pattern:', errorData);
+      console.warn('[SELF-IMPROVE] ❌ Failed to log error pattern:', insertError);
       return null;
     }
     
     recordSuccess();
-    const result = await response.json();
-    console.log(`[SELF-IMPROVE] ✅ Error pattern logged: ${result.pattern_id}`);
-    return result.pattern_id;
+    console.log(`[SELF-IMPROVE] ✅ Error pattern logged: ${newPattern.id}`);
+    return newPattern.id.toString();
   } catch (e) {
     recordFailure();
     console.warn('[SELF-IMPROVE] ❌ Error logging pattern:', e);
@@ -304,32 +328,62 @@ export async function logFixAttempt(
   try {
     console.log(`[SELF-IMPROVE] 📝 Logging fix attempt: ${fixDescription.substring(0, 50)}... (${success ? '✅ success' : '❌ failure'})`);
     
-    const { data: session } = await supabase.auth.getSession();
-    const response = await fetch(`${EDGE_FUNCTION_URL}/fixes`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-      },
-      body: JSON.stringify({
-        error_pattern_id: errorPatternId,
-        fix_description: fixDescription,
-        fix_diff: fixDiff,
-        success,
-      }),
-    });
+    // Check if this fix description already exists for this pattern
+    const { data: existing } = await supabase
+      .from('fix_attempts')
+      .select('id, applied_count, success_count, failure_count, fix_diff')
+      .eq('error_pattern_id', errorPatternId)
+      .eq('fix_description', fixDescription)
+      .single();
     
-    if (!response.ok) {
+    if (existing) {
+      // Update existing fix attempt
+      const { error: updateError } = await supabase
+        .from('fix_attempts')
+        .update({
+          applied_count: existing.applied_count + 1,
+          success_count: success ? existing.success_count + 1 : existing.success_count,
+          failure_count: success ? existing.failure_count : existing.failure_count + 1,
+          last_applied_at: new Date().toISOString(),
+          fix_diff: fixDiff || existing.fix_diff,
+        })
+        .eq('id', existing.id);
+      
+      if (updateError) {
+        recordFailure();
+        console.warn('[SELF-IMPROVE] ❌ Failed to update fix attempt:', updateError);
+        return null;
+      }
+      
+      recordSuccess();
+      console.log(`[SELF-IMPROVE] ✅ Fix attempt updated: ${existing.id}`);
+      return existing.id.toString();
+    }
+    
+    // Insert new fix attempt
+    const { data: newFix, error: insertError } = await supabase
+      .from('fix_attempts')
+      .insert({
+        error_pattern_id: parseInt(errorPatternId, 10),
+        fix_description: fixDescription,
+        fix_diff: fixDiff || null,
+        success,
+        applied_count: 1,
+        success_count: success ? 1 : 0,
+        failure_count: success ? 0 : 1,
+      })
+      .select('id')
+      .single();
+    
+    if (insertError) {
       recordFailure();
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-      console.warn('[SELF-IMPROVE] ❌ Failed to log fix attempt:', errorData);
+      console.warn('[SELF-IMPROVE] ❌ Failed to log fix attempt:', insertError);
       return null;
     }
     
     recordSuccess();
-    const result = await response.json();
-    console.log(`[SELF-IMPROVE] ✅ Fix attempt logged: ${result.fix_id}`);
-    return result.fix_id;
+    console.log(`[SELF-IMPROVE] ✅ Fix attempt logged: ${newFix.id}`);
+    return newFix.id.toString();
   } catch (e) {
     recordFailure();
     console.warn('[SELF-IMPROVE] ❌ Error logging fix attempt:', e);
@@ -339,6 +393,7 @@ export async function logFixAttempt(
 
 /**
  * Get errors to avoid for generation prompt
+ * Fetches the most common error patterns with their best fixes
  */
 export async function getErrorsToAvoid(limit = 20): Promise<ErrorToAvoid[]> {
   // Skip if we're in backoff mode
@@ -349,26 +404,60 @@ export async function getErrorsToAvoid(limit = 20): Promise<ErrorToAvoid[]> {
   try {
     console.log(`[SELF-IMPROVE] 🔍 Fetching errors to avoid (limit: ${limit})...`);
     
-    const { data: session } = await supabase.auth.getSession();
-    const response = await fetch(`${EDGE_FUNCTION_URL}/errors-to-avoid?limit=${limit}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-      },
-    });
+    // Get error patterns ordered by occurrence count
+    const { data: patterns, error } = await supabase
+      .from('error_patterns')
+      .select(`
+        id,
+        error_type,
+        field_name,
+        error_description,
+        occurrence_count
+      `)
+      .order('occurrence_count', { ascending: false })
+      .limit(limit);
     
-    if (!response.ok) {
+    if (error) {
       recordFailure();
-      console.warn('[SELF-IMPROVE] ❌ Failed to get errors to avoid');
+      console.warn('[SELF-IMPROVE] ❌ Failed to get errors to avoid:', error);
       return [];
     }
     
+    if (!patterns || patterns.length === 0) {
+      recordSuccess();
+      console.log('[SELF-IMPROVE] ℹ️ No error patterns found yet');
+      return [];
+    }
+    
+    // Get best fixes for each pattern
+    const patternIds = patterns.map(p => p.id);
+    const { data: fixes } = await supabase
+      .from('fix_attempts')
+      .select('error_pattern_id, fix_description, confidence_score')
+      .in('error_pattern_id', patternIds)
+      .gte('confidence_score', 0.5)
+      .order('confidence_score', { ascending: false });
+    
+    // Map fixes to patterns
+    const fixMap = new Map<number, string>();
+    fixes?.forEach(fix => {
+      if (!fixMap.has(fix.error_pattern_id)) {
+        fixMap.set(fix.error_pattern_id, fix.fix_description);
+      }
+    });
+    
+    // Format as ErrorToAvoid
+    const errorsToAvoid: ErrorToAvoid[] = patterns.map(p => ({
+      error_type: p.error_type,
+      field: p.field_name,
+      description: p.error_description,
+      occurrences: p.occurrence_count,
+      known_fix: fixMap.get(p.id) || undefined,
+    }));
+    
     recordSuccess();
-    const result = await response.json();
-    const errors = result.errors_to_avoid || [];
-    console.log(`[SELF-IMPROVE] ✅ Loaded ${errors.length} error patterns to avoid`);
-    return errors;
+    console.log(`[SELF-IMPROVE] ✅ Loaded ${errorsToAvoid.length} error patterns to avoid`);
+    return errorsToAvoid;
   } catch (e) {
     recordFailure();
     console.warn('[SELF-IMPROVE] ❌ Error getting errors to avoid:', e);
@@ -391,31 +480,55 @@ export async function getKnownFixes(errors: ValidationError[]): Promise<FixAttem
     const signatures = errors.map(e => normalizeError(e));
     console.log(`[SELF-IMPROVE] 🔍 Querying known fixes for ${signatures.length} error signatures...`);
     
-    const { data: session } = await supabase.auth.getSession();
-    const response = await fetch(`${EDGE_FUNCTION_URL}/query-fixes`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-      },
-      body: JSON.stringify({ error_signatures: signatures }),
-    });
+    // First get pattern IDs for these signatures
+    const { data: patterns, error: patternError } = await supabase
+      .from('error_patterns')
+      .select('id, error_signature')
+      .in('error_signature', signatures);
     
-    if (!response.ok) {
+    if (patternError || !patterns || patterns.length === 0) {
+      recordSuccess();
+      console.log('[SELF-IMPROVE] ℹ️ No known patterns for these errors');
+      return [];
+    }
+    
+    const patternIds = patterns.map(p => p.id);
+    
+    // Get successful fixes for these patterns
+    const { data: fixes, error: fixError } = await supabase
+      .from('fix_attempts')
+      .select(`
+        id,
+        error_pattern_id,
+        fix_description,
+        fix_diff,
+        success,
+        applied_count,
+        success_count,
+        failure_count,
+        confidence_score,
+        created_at,
+        last_applied_at
+      `)
+      .in('error_pattern_id', patternIds)
+      .gte('confidence_score', 0.5)
+      .order('confidence_score', { ascending: false });
+    
+    if (fixError) {
       recordFailure();
-      console.warn('[SELF-IMPROVE] ❌ Failed to query known fixes');
+      console.warn('[SELF-IMPROVE] ❌ Failed to query known fixes:', fixError);
       return [];
     }
     
     recordSuccess();
-    const result = await response.json();
-    const fixes = result.fixes || [];
-    if (fixes.length > 0) {
+    
+    if (fixes && fixes.length > 0) {
       console.log(`[SELF-IMPROVE] ✅ Found ${fixes.length} known fixes to apply`);
     } else {
-      console.log(`[SELF-IMPROVE] ℹ️ No known fixes found for these errors`);
+      console.log('[SELF-IMPROVE] ℹ️ No known fixes found for these errors');
     }
-    return fixes;
+    
+    return (fixes || []) as FixAttempt[];
   } catch (e) {
     recordFailure();
     console.warn('[SELF-IMPROVE] ❌ Error querying known fixes:', e);
@@ -439,29 +552,52 @@ export async function getProvenFixes(
   try {
     console.log(`[SELF-IMPROVE] 🔍 Fetching proven fixes (min confidence: ${minConfidence * 100}%)...`);
     
-    const { data: session } = await supabase.auth.getSession();
-    const response = await fetch(
-      `${EDGE_FUNCTION_URL}/fixes?min_confidence=${minConfidence}&min_applied=${minApplied}&limit=${limit}`,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-        },
-      }
-    );
+    const { data: fixes, error } = await supabase
+      .from('fix_attempts')
+      .select(`
+        id,
+        error_pattern_id,
+        fix_description,
+        fix_diff,
+        success,
+        applied_count,
+        success_count,
+        failure_count,
+        confidence_score,
+        created_at,
+        last_applied_at,
+        error_patterns (
+          id,
+          error_signature,
+          error_type,
+          field_name,
+          error_description
+        )
+      `)
+      .gte('confidence_score', minConfidence)
+      .gte('applied_count', minApplied)
+      .order('confidence_score', { ascending: false })
+      .limit(limit);
     
-    if (!response.ok) {
+    if (error) {
       recordFailure();
-      console.warn('[SELF-IMPROVE] ❌ Failed to get proven fixes');
+      console.warn('[SELF-IMPROVE] ❌ Failed to get proven fixes:', error);
       return [];
     }
     
     recordSuccess();
-    const result = await response.json();
-    const fixes = result.fixes || [];
-    console.log(`[SELF-IMPROVE] ✅ Loaded ${fixes.length} proven fixes`);
-    return fixes;
+    console.log(`[SELF-IMPROVE] ✅ Loaded ${fixes?.length || 0} proven fixes`);
+    
+    // Transform the response to match FixAttempt type
+    // Supabase returns error_patterns as array, but we expect a single object
+    const transformedFixes = (fixes || []).map((fix: any) => ({
+      ...fix,
+      error_patterns: Array.isArray(fix.error_patterns) 
+        ? fix.error_patterns[0] 
+        : fix.error_patterns
+    }));
+    
+    return transformedFixes as FixAttempt[];
   } catch (e) {
     recordFailure();
     console.warn('[SELF-IMPROVE] ❌ Error getting proven fixes:', e);
@@ -617,70 +753,81 @@ export async function submitHumanFix(fixData: HumanFix): Promise<boolean> {
   try {
     console.log(`[SELF-IMPROVE] 📝 Submitting human fix with ${fixData.fixes.length} corrections`);
     
-    const { data: session } = await supabase.auth.getSession();
-    
     // Submit each fix as a high-confidence pattern
     for (const fix of fixData.fixes) {
-      // Create error pattern
-      const patternResponse = await fetch(`${EDGE_FUNCTION_URL}/patterns`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-        },
-        body: JSON.stringify({
-          error_signature: `node_${fix.node_num}_${fix.field}`,
-          error_type: 'Human-Identified',
-          field_name: fix.field,
-          error_description: `Field "${fix.field}" had incorrect value. ${fix.explanation}`,
-          node_context: { node_num: fix.node_num, field: fix.field },
-        }),
-      });
+      const errorSignature = `node_${fix.node_num}_${fix.field}`;
       
-      if (!patternResponse.ok) {
-        console.warn('[SELF-IMPROVE] Failed to create pattern for human fix');
-        continue;
+      // Check if pattern exists, upsert
+      const { data: existingPattern } = await supabase
+        .from('error_patterns')
+        .select('id')
+        .eq('error_signature', errorSignature)
+        .single();
+      
+      let patternId: number;
+      
+      if (existingPattern) {
+        patternId = existingPattern.id;
+        // Update occurrence count
+        await supabase
+          .from('error_patterns')
+          .update({
+            occurrence_count: 1,
+            last_seen_at: new Date().toISOString(),
+          })
+          .eq('id', patternId);
+      } else {
+        // Create new pattern
+        const { data: newPattern, error: patternError } = await supabase
+          .from('error_patterns')
+          .insert({
+            error_signature: errorSignature,
+            error_type: 'Human-Identified',
+            field_name: fix.field,
+            error_description: `Field "${fix.field}" had incorrect value. ${fix.explanation}`,
+            node_context: { node_num: fix.node_num, field: fix.field },
+            occurrence_count: 1,
+          })
+          .select('id')
+          .single();
+        
+        if (patternError || !newPattern) {
+          console.warn('[SELF-IMPROVE] Failed to create pattern for human fix:', patternError);
+          continue;
+        }
+        patternId = newPattern.id;
       }
       
-      const patternResult = await patternResponse.json();
-      const patternId = patternResult.pattern_id;
-      
-      // Create fix attempt with high success rate
-      const fixResponse = await fetch(`${EDGE_FUNCTION_URL}/fixes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-        },
-        body: JSON.stringify({
+      // Create fix attempt with high success rate (pre-set high confidence)
+      const { error: fixError } = await supabase
+        .from('fix_attempts')
+        .insert({
           error_pattern_id: patternId,
           fix_description: `Change "${fix.current_value}" to "${fix.correct_value}". ${fix.explanation}`,
-          fix_diff: JSON.stringify({ before: fix.current_value, after: fix.correct_value }),
+          fix_diff: { before: fix.current_value, after: fix.correct_value },
           success: true,
-        }),
-      });
+          applied_count: 5, // Pre-seed with high counts for immediate confidence
+          success_count: 5,
+          failure_count: 0,
+        });
       
-      if (fixResponse.ok) {
+      if (!fixError) {
         console.log(`[SELF-IMPROVE] ✅ Human fix logged for node ${fix.node_num}`);
       }
     }
     
     // Log general guidance as a pattern
     if (fixData.general_guidance) {
-      await fetch(`${EDGE_FUNCTION_URL}/patterns`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.session?.access_token || ''}`,
-        },
-        body: JSON.stringify({
+      await supabase
+        .from('error_patterns')
+        .insert({
           error_signature: `guidance_${Date.now()}`,
           error_type: 'Human-Guidance',
           field_name: null,
           error_description: fixData.general_guidance,
           node_context: null,
-        }),
-      });
+          occurrence_count: 1,
+        });
       console.log(`[SELF-IMPROVE] ✅ General guidance logged`);
     }
     

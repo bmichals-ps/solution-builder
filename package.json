@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync-scripts": "npx tsx scripts/sync-startup-scripts.ts",
+    "validate-scripts": "npx tsx -e \"import { validateCriticalScripts, logScriptRegistry } from './src/data/startup-scripts'; logScriptRegistry(); const r = validateCriticalScripts(); console.log(r.valid ? '✅ All critical scripts valid' : '❌ Missing: ' + r.missing.join(', ')); process.exit(r.valid ? 0 : 1);\"",
+    "test:startup": "npx tsx scripts/test-startup-flow.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",

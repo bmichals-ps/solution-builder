@@ -98,6 +98,7 @@ export const OFFICIAL_ACTION_NODE_SCRIPTS = new Set([
   'EncodeForComparison', 'EncodeGalleryContents', 'EncodeGlobalVariables', 'EncodeText',
   'FailCountCheck', 'FeedbackToSheets', 'FormatPhone', 'FormatTimestamp', 'GenerateCalendarLinks',
   'GenerateDateSelection', 'GenerateImage', 'GenerateRandomCode', 'GenerateTimeSelection',
+  'GenAIFallback',  // AI-powered intent understanding for intelligent NLU fallback
   'GetAddressFromForm', 'GetAgentStatus', 'GetAgentWaitTime', 'GetBodyParts', 'GetBodyPartsBack',
   'GetCurrentDateTime', 'GetDataFromFile', 'GetDetailsFromZip', 'GetDialogflowIntent',
   'GetDistance', 'GetEvents', 'GetEventsDates', 'GetFirstUserMessage', 'GetGeminiCompletionContext',
@@ -120,6 +121,53 @@ export const OFFICIAL_ACTION_NODE_SCRIPTS = new Set([
   'ValidateAddress', 'ValidateDate', 'ValidatePhoneAndReturnStripped', 'ValidateRegex',
   'VarCheck', 'VariableReset', 'VerifyGPS',
 ]);
+
+/**
+ * Registry of action script output values
+ * Maps script names to their possible Decision Variable return values.
+ * Used to validate that What Next routing covers all possible outcomes.
+ * 
+ * CRITICAL: If a What Next is missing a route for any of these values,
+ * the bot will fail with an unhandled routing error.
+ */
+export const SCRIPT_OUTPUTS: Record<string, string[]> = {
+  // Startup & Platform
+  'UserPlatformRouting': ['ios', 'android', 'mac', 'windows', 'other', 'error'],
+  'SysShowMetadata': ['true', 'error'],
+  'SysSetEnv': ['true', 'error'],
+  
+  // Variable Operations
+  'SysAssignVariable': ['true', 'error'],
+  'SetVar': ['true', 'false', 'error'],
+  'AssignVariable': ['true', 'false', 'error'],
+  'SysVariableReset': ['true', 'error'],
+  
+  // Routing & Matching
+  'SysMultiMatchRouting': ['false', 'error'], // 'false' for no match, other values are dynamic
+  'MatchRouting': ['true', 'false', 'error'],
+  'MultiMatchRouting': ['false', 'error'], // matches are dynamic, false/error are standard
+  'VarCheck': ['true', 'false', 'error'],
+  
+  // Validation
+  'ValidateRegex': ['true', 'false', 'error'],
+  'ValidateDate': ['true', 'false', 'error'],
+  'ValidateAddress': ['true', 'false', 'error'],
+  'ValidatePhoneAndReturnStripped': ['true', 'false', 'error'],
+  
+  // Error Handling
+  'HandleBotError': ['bot_error', 'bot_timeout', 'other'],
+  
+  // AI/NLU
+  'GenAIFallback': ['understood', 'route_flow', 'not_understood', 'error'],
+  'GetGPTCompletion': ['true', 'false', 'error'],
+  'GetGeminiCompletionSimple': ['true', 'false', 'error'],
+  
+  // Common utilities
+  'LimitCounter': ['stop', 'continue', 'error'],
+  'FailCountCheck': ['stop', 'continue', 'error'],
+  'GetValue': ['true', 'false', 'error'],
+  'BotToPlatform': ['true', 'false', 'error'],
+};
 
 /**
  * Result of script detection
@@ -421,8 +469,8 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
     let modified = false;
     const nodeNum = parseInt(fields[COL.NODE_NUM], 10);
     const nodeType = fields[COL.NODE_TYPE]?.trim().toUpperCase();
-    const richType = fields[COL.RICH_TYPE]?.trim().toLowerCase();
-    const richContent = fields[COL.RICH_CONTENT]?.trim() || '';
+    let richType = fields[COL.RICH_TYPE]?.trim().toLowerCase();
+    let richContent = fields[COL.RICH_CONTENT]?.trim() || '';
 
     // --- FIX: Column count (pad/trim to exactly 26) ---
     if (fields.length !== 26) {
@@ -432,11 +480,134 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
       modified = true;
     }
 
+    // --- CRITICAL FIX: Node 1800 MUST have out_of_scope intent ---
+    // NLU-enabled bots require this for the fallback handler
+    if (nodeNum === 1800) {
+      const currentIntent = fields[COL.INTENT]?.trim().toLowerCase();
+      if (!currentIntent || currentIntent !== 'out_of_scope') {
+        fields[COL.INTENT] = 'out_of_scope';
+        fixes.push(`Node 1800: Added out_of_scope intent (NLU requirement)`);
+        console.log(`[structuralPreValidation] CRITICAL FIX: Node 1800 intent set to out_of_scope`);
+        modified = true;
+      }
+    }
+
+    // --- FIX: Rich Asset Type in Message field (AI put type in wrong field!) ---
+    const messageField = fields[COL.MESSAGE]?.trim() || '';
+    const RICH_ASSET_TYPES = ['quick_reply', 'button', 'buttons', 'listpicker', 'carousel', 'datepicker', 'timepicker', 'webview', 'file_upload', 'star_rating', 'imagebutton'];
+    if (messageField && RICH_ASSET_TYPES.includes(messageField.toLowerCase())) {
+      fixes.push(`Node ${nodeNum}: CRITICAL - Message field contained rich asset type "${messageField}" (clearing)`);
+      console.log(`[structuralPreValidation] CRITICAL FIX: Node ${nodeNum} message field had rich asset type: "${messageField}"`);
+      fields[COL.MESSAGE] = '';
+      modified = true;
+    }
+    
+    // --- FIX: Node numbers in Message field (CRITICAL - should NEVER happen) ---
+    // Pattern: message is just comma-separated numbers like "510,520,530"
+    const messageFieldForNumbers = fields[COL.MESSAGE]?.trim() || '';
+    if (messageFieldForNumbers && /^\d+(\s*,\s*\d+)*$/.test(messageFieldForNumbers)) {
+      fixes.push(`Node ${nodeNum}: CRITICAL - Message field contained node numbers "${messageFieldForNumbers}" (clearing)`);
+      console.log(`[structuralPreValidation] CRITICAL FIX: Node ${nodeNum} message field had node numbers: "${messageFieldForNumbers}"`);
+      
+      // Check if this is a button/listpicker/quick_reply node
+      // If so, DO NOT put multiple nodes in Next Nodes - buttons handle routing via dest
+      const hasRichAsset = richType && ['button', 'buttons', 'listpicker', 'quick_reply', 'carousel'].includes(richType);
+      
+      if (!hasRichAsset && !fields[COL.NEXT_NODES]?.trim()) {
+        // Only move to Next Nodes if there's no rich asset AND it's a single number
+        // Multiple comma-separated node numbers in Next Nodes is invalid
+        const nodeNums = messageFieldForNumbers.split(',').map(n => n.trim()).filter(n => n);
+        if (nodeNums.length === 1) {
+          fields[COL.NEXT_NODES] = nodeNums[0];
+          fixes.push(`Node ${nodeNum}: Moved single node number to Next Nodes field`);
+        }
+        // If multiple numbers, they're probably button destinations - just discard
+      }
+      
+      // ALWAYS clear the message - these are node numbers, not user-facing text
+      fields[COL.MESSAGE] = '';
+      modified = true;
+    }
+    
+    // --- FIX: Multiple node numbers in Next Nodes (only single node allowed) ---
+    const nextNodesField = fields[COL.NEXT_NODES]?.trim() || '';
+    if (nextNodesField && nextNodesField.includes(',')) {
+      // Multiple comma-separated nodes is only valid if the destinations are for different conditions
+      // But for Decision nodes with buttons, Next Nodes should be empty (buttons have dest)
+      const hasRichAssetRouting = richType && ['button', 'buttons', 'listpicker', 'quick_reply', 'carousel'].includes(richType);
+      
+      if (hasRichAssetRouting && nodeType === 'D') {
+        // Button node with multiple Next Nodes - clear it, buttons handle routing
+        fixes.push(`Node ${nodeNum}: Cleared multiple Next Nodes (buttons handle routing via dest)`);
+        fields[COL.NEXT_NODES] = '';
+        modified = true;
+      }
+    }
+
     // --- FIX: "buttons" (plural) with pipe content → "button" (singular) ---
     if (richType === 'buttons' && richContent && !richContent.startsWith('{')) {
       fields[COL.RICH_TYPE] = 'button';
       fixes.push(`Node ${nodeNum}: Changed Rich Asset Type "buttons" → "button" (pipe format requires singular)`);
       modified = true;
+    }
+
+    // --- FIX: Rich Asset Type with empty content → clear the type ---
+    // Bot Manager requires content if type is set
+    if (richType && (!richContent || richContent.trim() === '')) {
+      fields[COL.RICH_TYPE] = '';
+      fixes.push(`Node ${nodeNum}: Cleared empty Rich Asset Type "${richType}" (no content provided)`);
+      console.log(`[structuralPreValidation] EMPTY CONTENT FIX: Node ${nodeNum} cleared rich type "${richType}"`);
+      modified = true;
+      richType = ''; // Update local variable
+    }
+
+    // --- FIX: Pipe characters INSIDE button labels (CRITICAL - breaks parsing) ---
+    // Common AI mistakes: "10-20|people" or "5-10|Minutes Ago" 
+    // The | should ONLY separate buttons, not appear in labels
+    if ((richType === 'button' || richType === 'buttons') && richContent && !richContent.startsWith('{') && richContent.includes('~')) {
+      // CRITICAL: Fix missing pipes BEFORE sanitizing labels
+      // This converts "Label~100Label~200" -> "Label~100|Label~200"
+      // Must happen first or the label sanitization below will corrupt the content
+      const { fixed: pipedContent, wasFixed: pipesAdded } = fixButtonPipeFormat(richContent);
+      if (pipesAdded) {
+        richContent = pipedContent;
+        fields[COL.RICH_CONTENT] = richContent;
+        fixes.push(`Node ${nodeNum}: Added missing pipe separators between buttons`);
+        console.log(`[structuralPreValidation] PIPE FIX: Node ${nodeNum} added missing pipes`);
+        modified = true;
+      }
+      
+      // NOW parse and sanitize individual button labels (pipes are in place)
+      const buttons = richContent.split('|');
+      let needsFix = false;
+      const sanitizedButtons: string[] = [];
+      
+      for (const btn of buttons) {
+        const lastTildeIdx = btn.lastIndexOf('~');
+        if (lastTildeIdx > 0) {
+          let label = btn.substring(0, lastTildeIdx);
+          const dest = btn.substring(lastTildeIdx + 1);
+          
+          // Check if label contains additional pipes or tildes (shouldn't happen)
+          if (label.includes('|') || label.includes('~')) {
+            // Sanitize: replace | and ~ with hyphen
+            const originalLabel = label;
+            label = label.replace(/[|~]/g, '-');
+            fixes.push(`Node ${nodeNum}: Sanitized button label "${originalLabel}" → "${label}" (removed reserved chars)`);
+            console.log(`[structuralPreValidation] BUTTON LABEL FIX: Node ${nodeNum} "${originalLabel}" → "${label}"`);
+            needsFix = true;
+          }
+          sanitizedButtons.push(`${label}~${dest}`);
+        } else {
+          // Malformed button without tilde - keep as-is
+          sanitizedButtons.push(btn);
+        }
+      }
+      
+      if (needsFix) {
+        fields[COL.RICH_CONTENT] = sanitizedButtons.join('|');
+        modified = true;
+      }
     }
 
     // --- FIX: "button" (singular) with JSON content → convert to pipe format ---
@@ -512,26 +683,67 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
     }
 
     // --- FIX: Action node with empty Command ---
+    // CRITICAL: Skip startup nodes managed by injectRequiredStartupNodes
+    // These have specific commands that should NOT be overwritten to SysAssignVariable
+    const CRITICAL_STARTUP_NODES = new Set([
+      -500, // HandleBotError
+      1, 10, // ShowMetadata, UserPlatformRouting
+      100, 101, 102, 103, 104, 105, // Platform routing + SetEnv + InitContext
+      666, 999, // EndChat, LiveAgent (Decision nodes - template managed)
+      1800, 1802, 1803, 1804, // GenAI fallback chain
+      99990, // Error message
+      200, 201, 210, // Main menu nodes (D nodes, not A nodes!)
+    ]);
+    
     if (nodeType === 'A') {
       const cmd = fields[COL.COMMAND]?.trim();
       if (!cmd) {
-        fields[COL.COMMAND] = 'SysAssignVariable';
-        if (!fields[COL.PARAM_INPUT]?.trim()) {
-          fields[COL.PARAM_INPUT] = '{"set":{"PLACEHOLDER":"true"}}';
+        // SKIP fixing startup nodes - let injectRequiredStartupNodes handle them
+        if (CRITICAL_STARTUP_NODES.has(nodeNum)) {
+          fixes.push(`WARNING: Node ${nodeNum} has empty Command but is a critical startup node - skipping fix, will be handled by startup injection`);
+          // DON'T modify - injectRequiredStartupNodes will replace this node entirely
+        } else {
+          fields[COL.COMMAND] = 'SysAssignVariable';
+          if (!fields[COL.PARAM_INPUT]?.trim()) {
+            fields[COL.PARAM_INPUT] = '{"set":{"PLACEHOLDER":"true"}}';
+          }
+          if (!fields[COL.DEC_VAR]?.trim()) {
+            fields[COL.DEC_VAR] = 'success';
+          }
+          if (!fields[COL.WHAT_NEXT]?.trim()) {
+            fields[COL.WHAT_NEXT] = 'true~105|error~99990';
+          }
+          fixes.push(`Node ${nodeNum}: Added SysAssignVariable to empty Action node Command`);
+          modified = true;
         }
-        if (!fields[COL.DEC_VAR]?.trim()) {
-          fields[COL.DEC_VAR] = 'success';
-        }
-        if (!fields[COL.WHAT_NEXT]?.trim()) {
-          fields[COL.WHAT_NEXT] = 'true~105|error~99990';
-        }
-        fixes.push(`Node ${nodeNum}: Added SysAssignVariable to empty Action node Command`);
-        modified = true;
       }
 
-      // --- FIX: What Next without error path ---
+      // --- FIX: Action node with Command but missing What Next (CRITICAL!) ---
+      // Action nodes MUST have What Next for routing - bot will fail without it
       const wn = fields[COL.WHAT_NEXT]?.trim();
-      if (wn && !wn.toLowerCase().includes('error~')) {
+      const currentCmd = fields[COL.COMMAND]?.trim();
+      
+      if (currentCmd && !wn) {
+        // Action node has command but no What Next - add default routing
+        // Use command-specific routing where possible
+        const COMMAND_WHATNEXT_MAP: Record<string, string> = {
+          'SysAssignVariable': 'true~105|false~99990|error~99990',
+          'SysShowMetadata': 'true~10|error~99990',
+          'SysSetEnv': 'true~105|error~99990',
+          'UserPlatformRouting': 'ios~100|android~101|mac~102|windows~102|other~102|error~103',
+          'GenAIFallback': 'understood~1802|route_flow~1803|not_understood~1804|error~1804',
+          'HandleBotError': 'bot_error~99990|bot_timeout~99990|other~99990',
+          'ValidateRegex': 'true~200|false~200|error~99990',
+          'SysMultiMatchRouting': 'false~1800|error~1800',
+        };
+        
+        // Default: route to return menu (201) on success, error handler on failure
+        const defaultWhatNext = COMMAND_WHATNEXT_MAP[currentCmd] || 'true~201|false~99990|error~99990';
+        fields[COL.WHAT_NEXT] = defaultWhatNext;
+        fixes.push(`Node ${nodeNum}: Added missing What Next for ${currentCmd}: "${defaultWhatNext}"`);
+        modified = true;
+      } else if (wn && !wn.toLowerCase().includes('error~')) {
+        // What Next exists but missing error path
         fields[COL.WHAT_NEXT] = wn + '|error~99990';
         fixes.push(`Node ${nodeNum}: Added missing |error~99990 to What Next`);
         modified = true;
@@ -539,25 +751,128 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
 
       // --- FIX: What Next present but no Decision Variable ---
       if (fields[COL.WHAT_NEXT]?.trim() && !fields[COL.DEC_VAR]?.trim()) {
-        fields[COL.DEC_VAR] = 'success';
-        fixes.push(`Node ${nodeNum}: Added missing Decision Variable "success"`);
+        // Use command-specific Decision Variable, not just "success"
+        const cmdForDecVar = fields[COL.COMMAND]?.trim() || '';
+        const COMMAND_TO_DECVAR_MAP: Record<string, string> = {
+          'GenAIFallback': 'result',
+          'HandleBotError': 'error_type',
+          'SysMultiMatchRouting': 'route_to',
+          'UserPlatformRouting': 'success',
+          'SysAssignVariable': 'success',
+          'SysShowMetadata': 'success',
+          'SysSetEnv': 'success',
+          'ValidateRegex': 'success',
+        };
+        const correctDecVar = COMMAND_TO_DECVAR_MAP[cmdForDecVar] || 'success';
+        fields[COL.DEC_VAR] = correctDecVar;
+        fixes.push(`Node ${nodeNum}: Added missing Decision Variable "${correctDecVar}"`);
         modified = true;
       }
     }
 
     // --- FIX: Decision node dead-end (no Next Nodes, no buttons, no xfer_to_agent) ---
     if (nodeType === 'D') {
+      // CRITICAL FIX: Decision nodes CANNOT have Decision Variable or What Next
+      // These fields are ONLY valid for Action nodes. If present, clear them.
+      const hasDecVar = !!fields[COL.DEC_VAR]?.trim();
+      const hasWhatNext = !!fields[COL.WHAT_NEXT]?.trim();
+      if (hasDecVar || hasWhatNext) {
+        const clearedFields: string[] = [];
+        if (hasDecVar) {
+          clearedFields.push(`Decision Variable="${fields[COL.DEC_VAR]}"`);
+          fields[COL.DEC_VAR] = '';
+        }
+        if (hasWhatNext) {
+          clearedFields.push(`What Next="${fields[COL.WHAT_NEXT]}"`);
+          fields[COL.WHAT_NEXT] = '';
+        }
+        fixes.push(`Node ${nodeNum}: Cleared invalid ${clearedFields.join(' and ')} from Decision node (only Action nodes can have these)`);
+        modified = true;
+      }
+      
       const hasNext = !!fields[COL.NEXT_NODES]?.trim();
       const hasBtns = !!fields[COL.RICH_CONTENT]?.trim() && (richType === 'button' || richType === 'buttons' || richType === 'listpicker' || richType === 'quick_reply');
       const hasXfer = fields[COL.BEHAVIORS]?.includes('xfer_to_agent');
       const isEndChat = nodeNum === 666;
+      const nluDisabled = fields[COL.NLU_DISABLED]?.trim() === '1';
+      
+      // --- FIX: Nodes with buttons but no nextNodes should route typed input to GenAI ---
+      // This ensures users can type natural responses instead of only clicking buttons
+      if (hasBtns && !hasNext && !nluDisabled && !hasXfer) {
+        const message = fields[COL.MESSAGE] || '';
+        const isQuestion = message.includes('?');
+        
+        // Skip system nodes and agent transfer nodes
+        const isSystemNode = [666, 999, 99990, 1802, 1804].includes(nodeNum);
+        
+        if (!isSystemNode && message.trim()) {
+          // Add nextNodes to 1800 (GenAI) so typed responses get intelligent handling
+          fields[COL.NEXT_NODES] = '1800';
+          fixes.push(`Node ${nodeNum}: Added GenAI fallback (nextNodes=1800) for typed input`);
+          modified = true;
+          
+          // Also ensure NLU is enabled
+          if (fields[COL.NLU_DISABLED]?.trim()) {
+            fields[COL.NLU_DISABLED] = '';
+            fixes.push(`Node ${nodeNum}: Enabled NLU for natural input handling`);
+          }
+        }
+      }
+      
       if (!hasNext && !hasBtns && !hasXfer && !isEndChat) {
-        // Add a "Back to Menu" button to prevent dead-end
-        fields[COL.RICH_TYPE] = 'button';
-        fields[COL.RICH_CONTENT] = 'Back to Menu~201|Talk to Agent~999';
-        fields[COL.ANS_REQ] = '1';
-        fixes.push(`Node ${nodeNum}: Added recovery buttons to dead-end Decision node`);
-        modified = true;
+        // This node has no path forward - it's a true dead-end
+        // The AI should have provided either nextNodes OR richContent
+        const nodeName = fields[COL.NODE_NAME] || '';
+        const message = fields[COL.MESSAGE] || '';
+        
+        // Only add fallback buttons if the node has a message (user-facing)
+        // Empty message nodes might be placeholders that need review
+        if (message.trim()) {
+          // Log a warning - this indicates AI generation issue
+          console.warn(`[Dead-End Fix] Node ${nodeNum} "${nodeName}" has message but no path forward`);
+          
+          // Analyze the message to determine appropriate action
+          const msgLower = message.toLowerCase();
+          const isQuestion = message.includes('?') || 
+                            msgLower.includes('what ') ||
+                            msgLower.includes('which ') ||
+                            msgLower.includes('would you') ||
+                            msgLower.includes('do you');
+          
+          const isEndContext = msgLower.includes('thank') ||
+                              msgLower.includes('complete') ||
+                              msgLower.includes('finished') ||
+                              msgLower.includes('all set') ||
+                              nodeName.toLowerCase().includes('end') ||
+                              nodeName.toLowerCase().includes('result');
+          
+          fields[COL.RICH_TYPE] = 'button';
+          
+          if (isEndContext) {
+            // This looks like an end-of-flow message - add appropriate exit options
+            fields[COL.RICH_CONTENT] = 'Back to Menu~200|All Done~666|Talk to Agent~999';
+            fixes.push(`Node ${nodeNum}: Added exit options (end-of-flow context detected)`);
+          } else if (isQuestion) {
+            // This is a question without answer options - AI failed to provide choices
+            // Add a minimal "Continue" to prevent dead-end, but flag for review
+            const baseNode = Math.floor(nodeNum / 100) * 100;
+            const nextNode = nodeNum + 1;
+            fields[COL.RICH_CONTENT] = `Continue~${nextNode}|Back to Menu~200`;
+            fixes.push(`Node ${nodeNum}: Question without options - added Continue (needs review)`);
+          } else {
+            // Informational node - should have had nextNodes
+            // Add a Continue button to the next sequential node
+            const nextNode = nodeNum + 1;
+            fields[COL.RICH_CONTENT] = `Continue~${nextNode}|Back to Menu~200`;
+            fixes.push(`Node ${nodeNum}: Info node without nextNodes - added Continue`);
+          }
+          
+          fields[COL.ANS_REQ] = '1';
+          modified = true;
+        } else {
+          // Node has no message - might be a placeholder or error
+          fixes.push(`Node ${nodeNum}: Empty Decision node with no routing (may need review)`);
+        }
       }
     }
 
@@ -567,6 +882,80 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
       fields[COL.VARIABLE] = varCol.toUpperCase().replace(/[\s-]+/g, '_');
       fixes.push(`Node ${nodeNum}: Converted Variable to ALL_CAPS: ${fields[COL.VARIABLE]}`);
       modified = true;
+    }
+
+    // --- FIX: ValidateRegex missing Parameter Input ---
+    // Error: "Referenced global variable does not exist (value: LAST_USER_MESSAGE)"
+    const command = fields[COL.COMMAND]?.trim();
+    if (nodeType === 'A' && command === 'ValidateRegex') {
+      const paramInput = fields[COL.PARAM_INPUT]?.trim() || '';
+      let needsFix = false;
+      
+      if (!paramInput) {
+        needsFix = true;
+      } else {
+        try {
+          const parsed = JSON.parse(paramInput);
+          // Check for required fields (bundled format: regex+input, official: global_vars+validation)
+          needsFix = !((parsed.regex && parsed.input) || (parsed.global_vars && parsed.validation));
+        } catch {
+          needsFix = true;
+        }
+      }
+      
+      if (needsFix) {
+        const variableCol2 = fields[COL.VARIABLE]?.trim().toUpperCase() || '';
+        const nodeName2 = (fields[COL.NODE_NAME] || '').toLowerCase();
+        const desc = (fields[COL.DESCRIPTION] || '').toLowerCase();
+        const nodeInputCol = fields[COL.NODE_INPUT]?.trim() || '';
+        
+        // Infer regex based on hints
+        let regexPattern = '^[A-Za-z0-9]+$';
+        let varName = variableCol2 || 'INPUT_VALUE';
+        
+        const hint = variableCol2 + ' ' + nodeName2 + ' ' + desc;
+        if (hint.includes('zip') || hint.includes('postal')) {
+          regexPattern = '^[0-9]{5}(-[0-9]{4})?$';
+          if (!variableCol2) varName = 'ZIP_CODE';
+        } else if (hint.includes('email')) {
+          regexPattern = '^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$';
+          if (!variableCol2) varName = 'USER_EMAIL';
+        } else if (hint.includes('phone')) {
+          regexPattern = '^[0-9]{10,15}$';
+          if (!variableCol2) varName = 'PHONE_NUMBER';
+        }
+        
+        // Use Node Input to reference previous node where user typed
+        // Find the actual previous node that exists (not just nodeNum - 1 which may not exist)
+        const sortedNodes = Array.from(nodeSet).filter(n => n < nodeNum && n > 0).sort((a, b) => b - a);
+        const prevNodeNum = sortedNodes.length > 0 ? sortedNodes[0] : nodeNum - 1;
+        if (!nodeInputCol) {
+          fields[COL.NODE_INPUT] = `user_input: ${prevNodeNum}`;
+        }
+        
+        // Use bundled script format with Node Input reference
+        const inputRef = nodeInputCol ? 
+          `{${nodeInputCol.split(':')[0].trim()}}` : 
+          '{user_input}';
+        
+        fields[COL.PARAM_INPUT] = JSON.stringify({
+          regex: regexPattern,
+          input: inputRef
+        });
+        
+        // Ensure Variable column is set
+        if (!fields[COL.VARIABLE]?.trim()) {
+          fields[COL.VARIABLE] = varName;
+        }
+        
+        // Ensure Decision Variable is 'success' (bundled script returns success=true/false)
+        if (fields[COL.DEC_VAR]?.trim() !== 'success') {
+          fields[COL.DEC_VAR] = 'success';
+        }
+        
+        fixes.push(`Node ${nodeNum}: Added ValidateRegex Parameter Input with Node Input: user_input: ${prevNodeNum}`);
+        modified = true;
+      }
     }
 
     // --- FIX: xfer_to_agent with non-empty Next Nodes ---
@@ -625,11 +1014,12 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
   }
 
   // === PASS 3: Inject missing required system nodes ===
+  // NOTE: Node 1800 is NOT here - it's handled by GENAI_FALLBACK_NODES (Action node with GenAIFallback)
+  // The old definition as a Decision node was incorrect and caused validation errors
   const requiredSystemNodes: Record<number, string> = {
     [-500]: '-500,A,HandleBotError,,,,,,,,,,,HandleBotError,Catches exceptions,error_type,,"{""save_error_to"":""PLATFORM_ERROR""}",error_type,bot_error~99990|bot_timeout~99990|other~99990,,,PLATFORM_ERROR,,,',
     [666]: '666,D,EndChat,,,,,,Thank you for using our service. Goodbye!,,,,,,,,,,,,,,,,,,',
     [999]: '999,D,Agent Transfer,,,,,,,,,,xfer_to_agent,,,,,,,,,,,,,,',
-    [1800]: '1800,D,OutOfScope,out_of_scope,,,,,I\'m not sure I understood that.,button,Start Over~1|Talk to Agent~999,1,disable_input,,,,,,,,,,,,',
     [99990]: '99990,D,Error Message,,,,,,Oops! Something went wrong. Let me help you get back on track.,button,Start Over~1|Talk to Agent~999,1,disable_input,,,,,,,,,,,,',
   };
 
@@ -762,6 +1152,429 @@ export function structuralPreValidation(csv: string): { csv: string; fixes: stri
     
     if (orphanRefs.length > 0) {
       fixes.push(`Fixed ${orphanRefs.length} orphan node references: ${orphanRefs.sort((a, b) => a - b).join(', ')}`);
+    }
+  }
+
+  // === PASS 5: Global Variable Reference Validation ===
+  // CRITICAL: Ensures no variable is referenced before it's declared
+  // Error: "Referenced global variable does not exist" - NEVER let this happen
+  {
+    // Known system/platform variables that are always available
+    // NOTE: LAST_USER_MESSAGE is NOT a system variable - it must be declared or use Node Input
+    const SYSTEM_VARIABLES = new Set([
+      // Environment & Session
+      'ENV', 'ENVIRONMENT', 'SESSION_ID', 'CHAT_ID', 'USER_ID', 'CONSUMER_ID',
+      // Platform info
+      'PLATFORM', 'PLATFORM_ERROR', 'DEVICE_TYPE', 'BROWSER', 'USER_AGENT',
+      'IOS_USER', 'ANDROID_USER', 'DESKTOP_USER', 'MOBILE_USER',
+      // Branding
+      'COMPANY_NAME', 'BRAND_NAME', 'BOT_NAME', 'CLIENT_NAME',
+      // Common startup variables (set by SysShowMetadata, SysSetEnv)
+      'FORM_ID', 'ERROR_FLAG', 'RETRY_COUNT',
+      // Context tracking (set by GenAIFallback)
+      'LAST_TOPIC', 'LAST_ENTITY', 'CONVERSATION_CONTEXT', 'CONTEXT_FLOW',
+    ]);
+    
+    // Track all declared variables and which node declares them
+    const declaredVars = new Map<string, number>(); // var_name -> declaring_node_num
+    const nodeInputVars = new Map<string, { nodeNum: number; refNode: number }>(); // var_name -> {nodeNum, refNode}
+    
+    // Re-parse all lines to collect variable declarations in node order
+    interface ParsedNode {
+      nodeNum: number;
+      nodeType: string;
+      fields: string[];
+      lineIdx: number;
+    }
+    const allNodes: ParsedNode[] = [];
+    
+    for (let i = 1; i < fixedLines.length; i++) {
+      const line = fixedLines[i];
+      if (!line.trim()) continue;
+      const fields = parseCSVLineForFix(line);
+      while (fields.length < 26) fields.push('');
+      const nodeNum = parseInt(fields[COL.NODE_NUM], 10);
+      if (isNaN(nodeNum)) continue;
+      
+      allNodes.push({ nodeNum, nodeType: fields[COL.NODE_TYPE]?.trim().toUpperCase() || '', fields, lineIdx: i });
+      
+      // Collect variables declared in Variable column
+      const varCol = fields[COL.VARIABLE]?.trim();
+      if (varCol) {
+        varCol.split(',').forEach(v => {
+          const vName = v.trim().toUpperCase();
+          if (vName && !declaredVars.has(vName)) {
+            declaredVars.set(vName, nodeNum);
+          }
+        });
+      }
+      
+      // Collect variables created via Node Input
+      const nodeInput = fields[COL.NODE_INPUT]?.trim();
+      if (nodeInput) {
+        // Format: var_name: node_num, other_var: node_num
+        nodeInput.split(',').forEach(pair => {
+          const [varPart, nodePart] = pair.split(':').map(s => s.trim());
+          if (varPart && nodePart) {
+            const refNode = parseInt(nodePart, 10);
+            if (!isNaN(refNode)) {
+              nodeInputVars.set(varPart.toUpperCase(), { nodeNum, refNode });
+            }
+          }
+        });
+      }
+    }
+    
+    // Sort nodes by node number to process in logical order
+    allNodes.sort((a, b) => a.nodeNum - b.nodeNum);
+    
+    // Extract all variable references from a string (finds {VAR_NAME} patterns)
+    const extractVarRefs = (str: string): string[] => {
+      if (!str) return [];
+      const refs: string[] = [];
+      const regex = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+      let match;
+      while ((match = regex.exec(str)) !== null) {
+        refs.push(match[1].toUpperCase());
+      }
+      return refs;
+    };
+    
+    // Find the most recent Decision node before a given node (for input collection)
+    const findPreviousDecisionNode = (beforeNodeNum: number): number | null => {
+      let closest: number | null = null;
+      for (const node of allNodes) {
+        if (node.nodeNum >= beforeNodeNum) break;
+        if (node.nodeType === 'D') {
+          const ansReq = node.fields[COL.ANS_REQ]?.trim();
+          // Decision node that collects input (Answer Required=1)
+          if (ansReq === '1') {
+            closest = node.nodeNum;
+          }
+        }
+      }
+      return closest;
+    };
+    
+    // Process each node and fix undeclared variable references
+    for (const node of allNodes) {
+      const { nodeNum, nodeType, fields, lineIdx } = node;
+      let modified = false;
+      
+      // Build set of variables available at this node (declared before this node)
+      const availableVars = new Set<string>(SYSTEM_VARIABLES);
+      for (const [varName, declNode] of declaredVars) {
+        if (declNode < nodeNum || declNode === nodeNum) { // Include same node for self-references
+          availableVars.add(varName);
+        }
+      }
+      for (const [varName, info] of nodeInputVars) {
+        if (info.nodeNum <= nodeNum) {
+          availableVars.add(varName);
+        }
+      }
+      
+      // Columns that can contain variable references
+      const columnsToCheck = [
+        { col: COL.MESSAGE, name: 'Message' },
+        { col: COL.PARAM_INPUT, name: 'Parameter Input' },
+        { col: COL.RICH_CONTENT, name: 'Rich Asset Content' },
+        { col: COL.DESCRIPTION, name: 'Description' },
+      ];
+      
+      for (const { col, name } of columnsToCheck) {
+        const content = fields[col]?.trim() || '';
+        if (!content) continue;
+        
+        const refs = extractVarRefs(content);
+        const undeclaredRefs = refs.filter(r => !availableVars.has(r));
+        
+        if (undeclaredRefs.length > 0) {
+          // Fix each undeclared reference
+          let fixedContent = content;
+          
+          for (const undeclaredVar of undeclaredRefs) {
+            // Strategy 1: If it's an action node Parameter Input, try to add Node Input
+            if (col === COL.PARAM_INPUT && nodeType === 'A') {
+              const prevDecNode = findPreviousDecisionNode(nodeNum);
+              if (prevDecNode !== null) {
+                // Add Node Input to reference the previous decision node
+                const existingNodeInput = fields[COL.NODE_INPUT]?.trim() || '';
+                const newVarName = undeclaredVar.toLowerCase();
+                if (!existingNodeInput.includes(newVarName)) {
+                  fields[COL.NODE_INPUT] = existingNodeInput 
+                    ? `${existingNodeInput}, ${newVarName}: ${prevDecNode}`
+                    : `${newVarName}: ${prevDecNode}`;
+                  // Update the reference to use the Node Input variable
+                  fixedContent = fixedContent.replace(
+                    new RegExp(`\\{${undeclaredVar}\\}`, 'gi'),
+                    `{${newVarName}}`
+                  );
+                  fixes.push(`Node ${nodeNum}: Added Node Input "${newVarName}: ${prevDecNode}" to resolve {${undeclaredVar}}`);
+                  modified = true;
+                  // Add to available vars for subsequent checks
+                  availableVars.add(newVarName.toUpperCase());
+                  nodeInputVars.set(newVarName.toUpperCase(), { nodeNum, refNode: prevDecNode });
+                }
+              } else {
+                // No previous decision node found - replace with empty string or remove reference
+                fixedContent = fixedContent.replace(
+                  new RegExp(`\\{${undeclaredVar}\\}`, 'gi'),
+                  ''
+                );
+                fixes.push(`Node ${nodeNum}: Removed undeclared var {${undeclaredVar}} from ${name} (no source node found)`);
+                modified = true;
+              }
+            }
+            // Strategy 2: For Message column, check if there's a matching Variable column we can use
+            else if (col === COL.MESSAGE) {
+              // Check if a node AFTER this one declares the variable (forward reference)
+              const futureDecl = [...declaredVars.entries()].find(([v, n]) => v === undeclaredVar && n > nodeNum);
+              if (futureDecl) {
+                // Remove the forward reference - can't use variable before it's declared
+                fixedContent = fixedContent.replace(
+                  new RegExp(`\\{${undeclaredVar}\\}`, 'gi'),
+                  `[${undeclaredVar}]` // Convert to display text
+                );
+                fixes.push(`Node ${nodeNum}: Converted forward ref {${undeclaredVar}} to [${undeclaredVar}] in ${name}`);
+                modified = true;
+              } else {
+                // Unknown variable - remove it
+                fixedContent = fixedContent.replace(
+                  new RegExp(`\\{${undeclaredVar}\\}`, 'gi'),
+                  ''
+                );
+                fixes.push(`Node ${nodeNum}: Removed undeclared var {${undeclaredVar}} from ${name}`);
+                modified = true;
+              }
+            }
+            // Strategy 3: For other columns, remove the undeclared reference
+            else {
+              fixedContent = fixedContent.replace(
+                new RegExp(`\\{${undeclaredVar}\\}`, 'gi'),
+                ''
+              );
+              fixes.push(`Node ${nodeNum}: Removed undeclared var {${undeclaredVar}} from ${name}`);
+              modified = true;
+            }
+          }
+          
+          if (fixedContent !== content) {
+            fields[col] = fixedContent;
+          }
+        }
+      }
+      
+      if (modified) {
+        fixedLines[lineIdx] = reconstructCSVLine(fields);
+      }
+    }
+    
+    // Log summary of variable validation
+    const varValidationFixes = fixes.filter(f => 
+      f.includes('undeclared var') || f.includes('Node Input') || f.includes('forward ref')
+    );
+    if (varValidationFixes.length > 0) {
+      console.log(`[PreValidation] PASS 5: Fixed ${varValidationFixes.length} undeclared variable references`);
+    }
+  }
+
+  // === PASS 6: What Next Routing Completeness Validation ===
+  // CRITICAL: Ensures action nodes with known scripts have all required routes
+  // Error: If UserPlatformRouting returns 'mac' but What Next doesn't have mac~xxx, bot fails
+  {
+    let routingFixes = 0;
+    
+    for (let i = 1; i < fixedLines.length; i++) {
+      const line = fixedLines[i];
+      if (!line.trim()) continue;
+      
+      const fields = parseCSVLineForFix(line);
+      while (fields.length < 26) fields.push('');
+      
+      const nodeNum = parseInt(fields[COL.NODE_NUM], 10);
+      if (isNaN(nodeNum)) continue;
+      
+      const nodeType = fields[COL.NODE_TYPE]?.trim().toUpperCase();
+      if (nodeType !== 'A') continue; // Only action nodes have What Next
+      
+      const command = fields[COL.COMMAND]?.trim();
+      const whatNext = fields[COL.WHAT_NEXT]?.trim() || '';
+      
+      if (!command || !whatNext) continue;
+      
+      // Check if this script has known outputs
+      const expectedOutputs = SCRIPT_OUTPUTS[command];
+      if (!expectedOutputs) continue;
+      
+      // Parse existing routes from What Next (format: value~node|value~node)
+      const existingRoutes = new Set<string>();
+      whatNext.split('|').forEach(pair => {
+        const parts = pair.split('~');
+        if (parts.length === 2) {
+          existingRoutes.add(parts[0].trim().toLowerCase());
+        }
+      });
+      
+      // Find missing routes
+      const missingRoutes: string[] = [];
+      for (const output of expectedOutputs) {
+        if (!existingRoutes.has(output.toLowerCase())) {
+          missingRoutes.push(output);
+        }
+      }
+      
+      // Auto-fix: Add missing routes to error handler (99990) or first valid route's destination
+      if (missingRoutes.length > 0) {
+        // Determine fallback destination
+        let fallbackDest = '99990';
+        
+        // For platform routing, use the same destination as 'other' or first non-error route
+        if (command === 'UserPlatformRouting') {
+          // Try to find an existing desktop/other route, or use the first non-error destination
+          const firstRoute = whatNext.split('|')[0];
+          const firstDest = firstRoute?.split('~')[1]?.trim();
+          if (firstDest && firstDest !== '103' && firstDest !== '99990') {
+            fallbackDest = firstDest;
+          }
+        }
+        
+        // Add missing routes
+        const newRoutes = missingRoutes.map(r => `${r}~${fallbackDest}`);
+        const fixedWhatNext = whatNext + '|' + newRoutes.join('|');
+        
+        fields[COL.WHAT_NEXT] = fixedWhatNext;
+        fixedLines[i] = reconstructCSVLine(fields);
+        routingFixes++;
+        
+        fixes.push(`Node ${nodeNum}: Added missing ${command} routes: ${missingRoutes.join(', ')} → ${fallbackDest}`);
+      }
+    }
+    
+    if (routingFixes > 0) {
+      console.log(`[PreValidation] PASS 6: Fixed ${routingFixes} incomplete What Next routes`);
+    }
+  }
+
+  // === PASS 7: Question Loop Detection ===
+  // CRITICAL: Detect flows where user keeps getting questions without actual content delivery
+  // This is a major UX issue - user clicks "Ingredients" and gets another question instead of info
+  {
+    // Build a map of nodes for traversal
+    const nodeMap = new Map<number, { message: string; nextNodes: number[]; richDests: number[] }>();
+    
+    for (let i = 1; i < fixedLines.length; i++) {
+      const line = fixedLines[i];
+      if (!line.trim()) continue;
+      
+      const fields = parseCSVLineForFix(line);
+      const nodeNum = parseInt(fields[COL.NODE_NUM], 10);
+      if (isNaN(nodeNum)) continue;
+      
+      const nodeType = fields[COL.NODE_TYPE]?.trim().toUpperCase();
+      if (nodeType !== 'D') continue; // Only Decision nodes
+      
+      const message = fields[COL.MESSAGE]?.trim() || '';
+      const nextNodesStr = fields[COL.NEXT_NODES]?.trim() || '';
+      const richContent = fields[COL.RICH_CONTENT]?.trim() || '';
+      
+      // Parse next nodes
+      const nextNodes: number[] = [];
+      if (nextNodesStr) {
+        const num = parseInt(nextNodesStr, 10);
+        if (!isNaN(num) && num !== 1800) nextNodes.push(num); // Exclude GenAI fallback
+      }
+      
+      // Parse button destinations
+      const richDests: number[] = [];
+      if (richContent.includes('~')) {
+        // Pipe format
+        richContent.split('|').forEach(btn => {
+          const match = btn.match(/~(\d+)/);
+          if (match) {
+            const dest = parseInt(match[1], 10);
+            if (!isNaN(dest) && dest !== 200 && dest !== 201 && dest !== 666 && dest !== 999) {
+              richDests.push(dest);
+            }
+          }
+        });
+      } else if (richContent.startsWith('{')) {
+        // JSON format
+        try {
+          const obj = JSON.parse(richContent);
+          (obj.options || []).forEach((opt: any) => {
+            const dest = parseInt(String(opt.dest), 10);
+            if (!isNaN(dest) && dest !== 200 && dest !== 201 && dest !== 666 && dest !== 999) {
+              richDests.push(dest);
+            }
+          });
+        } catch { /* ignore */ }
+      }
+      
+      nodeMap.set(nodeNum, { message, nextNodes, richDests });
+    }
+    
+    // Detect question loops: 3+ consecutive questions without info
+    const isQuestion = (msg: string): boolean => {
+      const lower = msg.toLowerCase();
+      return msg.includes('?') || 
+             lower.includes('what ') ||
+             lower.includes('which ') ||
+             lower.includes('would you') ||
+             lower.includes('do you') ||
+             lower.includes('how can') ||
+             lower.includes('select');
+    };
+    
+    // Check paths from each node
+    const questionLoopWarnings: string[] = [];
+    
+    for (const [startNode, data] of nodeMap) {
+      // Only start from 3xx, 4xx, etc. flow entry points
+      if (startNode < 300 || startNode % 100 !== 0) continue;
+      
+      // BFS to detect question loops
+      const visited = new Set<number>();
+      const queue: { node: number; questionDepth: number; path: number[] }[] = [];
+      
+      queue.push({ node: startNode, questionDepth: isQuestion(data.message) ? 1 : 0, path: [startNode] });
+      
+      while (queue.length > 0) {
+        const { node, questionDepth, path } = queue.shift()!;
+        
+        if (visited.has(node)) continue;
+        visited.add(node);
+        
+        const nodeData = nodeMap.get(node);
+        if (!nodeData) continue;
+        
+        const isQ = isQuestion(nodeData.message);
+        const newDepth = isQ ? questionDepth + 1 : 0;
+        
+        // Flag if we hit 4+ questions in a row (allowing 1 category + 1 subcategory + 1 specific)
+        if (newDepth >= 4) {
+          questionLoopWarnings.push(
+            `WARNING: Question loop detected! Path ${path.join(' → ')} → ${node} has ${newDepth} consecutive questions without delivering information.`
+          );
+          continue; // Don't traverse further
+        }
+        
+        // Add children to queue
+        const children = [...nodeData.nextNodes, ...nodeData.richDests];
+        for (const child of children) {
+          if (!visited.has(child) && nodeMap.has(child)) {
+            queue.push({ node: child, questionDepth: newDepth, path: [...path, child] });
+          }
+        }
+      }
+    }
+    
+    if (questionLoopWarnings.length > 0) {
+      console.warn(`[PreValidation] PASS 7: ${questionLoopWarnings.length} question loop(s) detected - UX review recommended`);
+      for (const warn of questionLoopWarnings) {
+        console.warn(`[QuestionLoop] ${warn}`);
+        fixes.push(warn);
+      }
     }
   }
 
@@ -918,7 +1731,8 @@ function fixRichAssetContent(content: string, richType?: string): { fixed: strin
 /**
  * Fix reserved characters inside button labels
  * Pattern: "$25|k" -> "$25k" (pipe character incorrectly inside label)
- * This fixes a common AI mistake where | appears inside price labels
+ * Pattern: "2|FA" -> "2FA" (pipe inside acronym like 2FA)
+ * This fixes common AI mistakes where | appears inside labels instead of between buttons
  */
 function fixReservedCharactersInButtons(content: string): { fixed: string; wasFixed: boolean } {
   // Skip if JSON format
@@ -934,37 +1748,51 @@ function fixReservedCharactersInButtons(content: string): { fixed: string; wasFi
   let fixedContent = content;
   
   // Fix 1: Price labels with pipe before 'k' (thousand) - "$25|k" -> "$25k"
-  // Pattern: $<number>|k or $<number>|K (for thousands like $25k, $35k)
   fixedContent = fixedContent.replace(/(\$\d+)\|([kK])/g, '$1$2');
   
   // Fix 2: Price labels with pipe before 'm' (million) - "$1|m" -> "$1m"
   fixedContent = fixedContent.replace(/(\$\d+)\|([mM])/g, '$1$2');
   
-  // Fix 3: General pattern - pipe between number and single letter that's NOT followed by ~
-  // This catches "$25|k-$35|k" patterns where pipe is inside a range label
-  fixedContent = fixedContent.replace(/(\d+)\|([a-zA-Z])(?=[^~]*~)/g, '$1$2');
+  // Fix 3: Acronyms like "2|FA" -> "2FA" (two-factor auth)
+  // Pattern: digit|uppercase letters (common for 2FA, 3D, 4K, etc.)
+  fixedContent = fixedContent.replace(/(\d)\|([A-Z]{1,3})(?=[\s~]|$)/g, '$1$2');
   
-  // Fix 4: Handle ranges like "$25|k-$35|k" -> "$25k-$35k"
-  // Look for pipe between digits/letters within a label (before ~)
-  const parts = fixedContent.split('~');
-  const fixedParts = parts.map((part, idx) => {
-    // Each part except the last has format: "Label" or "Label|" 
-    // The last part is just a node number
-    if (idx < parts.length - 1 || !part.match(/^\d+$/)) {
-      // This is a label, fix any internal pipes that shouldn't be there
-      // Pattern: something|letter where letter is not followed by node routing
-      return part.replace(/\|([a-zA-Z])/g, (match, letter) => {
-        // Check if this looks like a proper button separator (letter followed by label text)
-        // If it's just a single letter like 'k' or 'm' for thousands/millions, remove the pipe
-        if (letter.match(/^[kKmMbB]$/)) {
-          return letter; // Remove pipe, keep letter (e.g., "$25|k" -> "$25k")
+  // Fix 4: General pattern - pipe between alphanumeric characters within a button label
+  // Look at each button individually (split by | and recombine smartly)
+  // First, identify valid button separators: they come after ~nodeNum
+  // Invalid pipes are inside labels (before the first ~ or between label chars)
+  const buttons = fixedContent.split('|');
+  const fixedButtons: string[] = [];
+  
+  for (let i = 0; i < buttons.length; i++) {
+    let btn = buttons[i];
+    
+    // If this segment doesn't contain ~ and the previous one ended with ~number,
+    // this is likely a continuation of a broken label
+    if (i > 0 && !btn.includes('~') && fixedButtons.length > 0) {
+      // Check if this looks like it should be part of the previous button's label
+      // e.g., "Enable 2" + "FA~631" should become "Enable 2FA~631"
+      const lastBtn = fixedButtons[fixedButtons.length - 1];
+      if (!lastBtn.includes('~')) {
+        // Previous button also has no ~, merge them
+        fixedButtons[fixedButtons.length - 1] = lastBtn + btn;
+        continue;
+      } else if (btn.match(/^[A-Z]{1,4}~/)) {
+        // This starts with uppercase letters then ~ (like "FA~631")
+        // It's likely the second half of an acronym, merge with previous
+        // But only if previous ends with a digit
+        const prevParts = lastBtn.split('~');
+        if (prevParts.length === 1 && prevParts[0].match(/\d$/)) {
+          fixedButtons[fixedButtons.length - 1] = lastBtn + btn;
+          continue;
         }
-        return match; // Keep the pipe (it's a real separator)
-      });
+      }
     }
-    return part;
-  });
-  fixedContent = fixedParts.join('~');
+    
+    fixedButtons.push(btn);
+  }
+  
+  fixedContent = fixedButtons.join('|');
   
   return { 
     fixed: fixedContent, 
@@ -1267,6 +2095,26 @@ function applyProgrammaticFixForError(csv: string, error: ValidationError): stri
   // Fix: Decision Variable mismatch ("dir_field not in payload")
   if (errorDesc.includes('dir_field') || errorDesc.includes('proposed dir_field')) {
     const nodeNum = error.node_num;
+    
+    // CRITICAL: Skip programmatic fixes for startup nodes that are managed by injectRequiredStartupNodes
+    // These nodes have specific configurations that should NOT be overwritten
+    const PROTECTED_STARTUP_NODES = new Set([
+      -500, // HandleBotError - decVar: error_type
+      1, // SysShowMetadata - decVar: success
+      10, // UserPlatformRouting - decVar: success (but special What Next)
+      100, 101, 102, // Platform SetVar - decVar: success
+      104, // SysSetEnv - decVar: success
+      105, // InitContext - decVar: success
+      1800, // GenAIFallback - decVar: result (NOT success!)
+      1803, // RouteDetectedIntent - decVar: route_to
+      1804, // FallbackLoop - may have special config
+    ]);
+    
+    if (nodeNum !== undefined && PROTECTED_STARTUP_NODES.has(nodeNum)) {
+      console.log(`[Programmatic Fix] Skipping protected startup node ${nodeNum} - will be handled by startup injection`);
+      return csv; // Don't modify - let injectRequiredStartupNodes handle it
+    }
+    
     const lines = csv.split('\n');
     const fixedLines = lines.map((line, idx) => {
       if (idx === 0) return line;
@@ -1276,14 +2124,64 @@ function applyProgrammaticFixForError(csv: string, error: ValidationError): stri
       
       const lineNodeNum = parseInt(fields[0], 10);
       if (lineNodeNum === nodeNum) {
-        // Set Decision Variable to "success" — the universal safe default
-        fields[18] = 'success';
-        // Ensure What Next uses success-based routing
-        const wn = fields[19]?.trim();
-        if (!wn || !wn.includes('success') || !wn.includes('true')) {
-          fields[19] = 'true~' + (fields[7]?.trim()?.split(/[,|]/)[0] || '201') + '|false~99990|error~99990';
+        const nodeType = fields[1]?.trim().toUpperCase();
+        
+        // For Decision nodes: CLEAR Action-only columns - D nodes should NOT have Decision Variable
+        if (nodeType === 'D') {
+          // Move any message from Node Input (col 16) to Message (col 8) if Message is empty
+          if (!fields[8]?.trim() && fields[16]?.trim()) {
+            fields[8] = fields[16];
+            fields[16] = '';
+            console.log(`[Programmatic Fix] Moved message from Node Input to Message for node ${nodeNum}`);
+          }
+          // Clear Action-only columns: Command(13), Description(14), Output(15), ParamInput(17), DecisionVar(18), WhatNext(19)
+          fields[13] = '';
+          fields[14] = '';
+          fields[15] = '';
+          fields[17] = '';
+          fields[18] = '';
+          fields[19] = '';
+          console.log(`[Programmatic Fix] Cleared Action-only columns for Decision node ${nodeNum}`);
+          return reconstructCSVLine(fields);
         }
-        console.log(`[Programmatic Fix] Fixed Decision Variable for node ${nodeNum} → "success"`);
+        
+        // For Action nodes: Use command-specific Decision Variable, not just "success"
+        const command = fields[13]?.trim() || '';
+        const COMMAND_TO_DECVAR: Record<string, string> = {
+          'SysAssignVariable': 'success',
+          'SysShowMetadata': 'success',
+          'SysSetEnv': 'success',
+          'SysVariableReset': 'success',
+          'HandleBotError': 'error_type',
+          'UserPlatformRouting': 'success',
+          'GenAIFallback': 'result',
+          'ValidateRegex': 'success',
+          'ValidateDate': 'success',
+          'GetValue': 'success',
+          'SetVar': 'success',
+          'VarCheck': 'valid',
+          'LimitCounter': 'valid',
+          'BotToPlatform': 'success',
+          'SysMultiMatchRouting': 'route_to', // Uses output variable name
+        };
+        
+        const correctDecVar = COMMAND_TO_DECVAR[command] || 'success';
+        fields[18] = correctDecVar;
+        
+        // Only fix What Next if it's empty or clearly wrong for the decision variable
+        const wn = fields[19]?.trim();
+        if (!wn) {
+          // Generate appropriate What Next based on the decision variable
+          if (correctDecVar === 'success') {
+            fields[19] = 'true~' + (fields[7]?.trim()?.split(/[,|]/)[0] || '201') + '|false~99990|error~99990';
+          } else if (correctDecVar === 'error_type') {
+            fields[19] = 'bot_error~99990|bot_timeout~99990|other~99990';
+          } else if (correctDecVar === 'valid') {
+            fields[19] = 'true~' + (fields[7]?.trim()?.split(/[,|]/)[0] || '201') + '|false~99990|error~99990';
+          }
+          // For other decision variables, leave What Next alone - AI or startup injection will handle
+        }
+        console.log(`[Programmatic Fix] Fixed Decision Variable for Action node ${nodeNum} → "${correctDecVar}"`);
         return reconstructCSVLine(fields);
       }
       return line;
@@ -1353,6 +2251,50 @@ function applyProgrammaticFixForError(csv: string, error: ValidationError): stri
     return fixedLines.join('\n');
   }
   
+  // Fix: Rich Asset Type invalid - content exists but type is missing/invalid
+  if (errorDesc.includes('rich type is invalid') || (fieldName === 'Rich Asset Content' && errorDesc.includes('embed type'))) {
+    const nodeNum = error.node_num;
+    const lines = csv.split('\n');
+    const fixedLines = lines.map((line, idx) => {
+      if (idx === 0) return line;
+      
+      const fields = parseCSVLineForFix(line);
+      if (fields.length < 11) return line;
+      
+      const lineNodeNum = parseInt(fields[0], 10);
+      if (lineNodeNum === nodeNum) {
+        const richContent = fields[10]?.trim() || '';
+        if (richContent) {
+          const isJsonFormat = richContent.startsWith('{') || richContent.startsWith('[');
+          const isPipeFormat = richContent.includes('~') && !richContent.startsWith('{');
+          
+          if (isPipeFormat) {
+            fields[9] = 'button';
+            console.log(`[Programmatic Fix] Set Rich Asset Type to 'button' for pipe content at node ${nodeNum}`);
+          } else if (isJsonFormat) {
+            // Try to detect the type from JSON content
+            try {
+              const parsed = JSON.parse(richContent);
+              if (parsed.url) {
+                fields[9] = 'webview';
+              } else if (parsed.options?.some((opt: { description?: string }) => opt.description)) {
+                fields[9] = 'listpicker';
+              } else {
+                fields[9] = 'buttons';
+              }
+            } catch {
+              fields[9] = 'buttons';
+            }
+            console.log(`[Programmatic Fix] Set Rich Asset Type to '${fields[9]}' for JSON content at node ${nodeNum}`);
+          }
+          return reconstructCSVLine(fields);
+        }
+      }
+      return line;
+    });
+    return fixedLines.join('\n');
+  }
+  
   return csv;
 }
 
@@ -1418,6 +2360,25 @@ export function sanitizeCSVForDeploy(csv: string): string {
   let skippedRows = 0;
   let fixesApplied = 0;
   
+  // FIRST PASS: Collect all valid node numbers for reference lookup
+  const allNodeNumbers = new Set<number>();
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const tempFields = parseCSVLineForFix(line);
+    const numStr = tempFields[NODE_NUM_COL]?.trim() || '';
+    const num = parseInt(numStr, 10);
+    if (!isNaN(num) && numStr === String(num)) {
+      allNodeNumbers.add(num);
+    }
+  }
+  
+  // Helper: Find the actual previous node that exists (not just nodeNum - 1)
+  const findPreviousExistingNode = (beforeNode: number): number => {
+    const candidates = Array.from(allNodeNumbers).filter(n => n < beforeNode && n > 0).sort((a, b) => b - a);
+    return candidates.length > 0 ? candidates[0] : beforeNode - 1;
+  };
+  
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) {
@@ -1480,7 +2441,40 @@ export function sanitizeCSVForDeploy(csv: string): string {
       const isJsonFormat = richContent.startsWith('{') || richContent.startsWith('[');
       const isPipeFormat = richContent.includes('~') && !richContent.startsWith('{');
       
-      if (richType === 'button' && isJsonFormat) {
+      // FIX 1a: Rich Asset Content exists but Rich Asset Type is empty or invalid
+      if (!richType || !['button', 'buttons', 'listpicker', 'quick_reply', 'carousel', 'webview', 'datepicker', 'timepicker', 'file_upload', 'imagebutton'].includes(richType)) {
+        if (isPipeFormat) {
+          // Pipe format (Label~dest|Label~dest) needs 'button' (singular)
+          fields[RICH_TYPE_COL] = 'button';
+          richType = 'button';
+          needsReconstruct = true;
+          fixesApplied++;
+          console.log(`[Sanitize] Set missing Rich Asset Type to 'button' for pipe content at node ${nodeNum}`);
+        } else if (isJsonFormat) {
+          // JSON format needs 'buttons' (plural) by default - can be listpicker too
+          try {
+            const parsed = JSON.parse(richContent);
+            if (parsed.type === 'dynamic' || (parsed.options && Array.isArray(parsed.options))) {
+              // Check if it looks more like a listpicker (has description fields)
+              const hasDescriptions = parsed.options?.some((opt: { description?: string }) => opt.description);
+              fields[RICH_TYPE_COL] = hasDescriptions ? 'listpicker' : 'buttons';
+              richType = hasDescriptions ? 'listpicker' : 'buttons';
+            } else if (parsed.url) {
+              fields[RICH_TYPE_COL] = 'webview';
+              richType = 'webview';
+            } else {
+              fields[RICH_TYPE_COL] = 'buttons';
+              richType = 'buttons';
+            }
+          } catch {
+            fields[RICH_TYPE_COL] = 'buttons';
+            richType = 'buttons';
+          }
+          needsReconstruct = true;
+          fixesApplied++;
+          console.log(`[Sanitize] Set missing Rich Asset Type to '${richType}' for JSON content at node ${nodeNum}`);
+        }
+      } else if (richType === 'button' && isJsonFormat) {
         // Change to 'buttons' (plural) for JSON format
         fields[RICH_TYPE_COL] = 'buttons';
         richType = 'buttons';
@@ -1494,6 +2488,40 @@ export function sanitizeCSVForDeploy(csv: string): string {
         needsReconstruct = true;
         fixesApplied++;
         console.log(`[Sanitize] Changed Rich Asset Type from 'buttons' to 'button' for pipe content at node ${nodeNum}`);
+      } else if ((richType === 'quick_reply' || richType === 'listpicker') && isPipeFormat) {
+        // CRITICAL FIX: quick_reply and listpicker REQUIRE JSON format, not pipe format
+        // Convert pipe format (Label~dest|Label~dest) to JSON format
+        try {
+          const buttons = richContent.split('|').filter((b: string) => b.trim());
+          const options: Array<{ label: string; dest: string; description?: string }> = [];
+          
+          for (const btn of buttons) {
+            // Handle pipes within labels (e.g., "15-30|people~721" should be "15-30 people~721")
+            // Find the LAST ~ which is the separator between label and dest
+            const lastTildeIdx = btn.lastIndexOf('~');
+            if (lastTildeIdx > 0) {
+              let label = btn.substring(0, lastTildeIdx).trim();
+              const dest = btn.substring(lastTildeIdx + 1).trim();
+              
+              // Replace any remaining pipes in the label with spaces
+              label = label.replace(/\|/g, ' ');
+              
+              if (label && dest) {
+                options.push({ label, dest });
+              }
+            }
+          }
+          
+          if (options.length > 0) {
+            const jsonContent = JSON.stringify({ type: 'static', options });
+            fields[RICH_CONTENT_COL] = jsonContent;
+            needsReconstruct = true;
+            fixesApplied++;
+            console.log(`[Sanitize] Converted pipe format to JSON for ${richType} at node ${nodeNum}: ${options.length} options`);
+          }
+        } catch (e) {
+          console.warn(`[Sanitize] Failed to convert pipe format to JSON for ${richType} at node ${nodeNum}:`, e);
+        }
       }
     }
     
@@ -1832,25 +2860,41 @@ export function sanitizeCSVForDeploy(csv: string): string {
     // ========================================
     // FIX 12: Empty Command on Action nodes - CRITICAL!
     // Error: "Command string must follow camelcase convention" means Command is empty
+    // 
+    // EXCEPTION: Skip critical startup nodes - they're managed by injectRequiredStartupNodes
+    // which will replace them entirely with the correct template
     // ========================================
+    const CRITICAL_STARTUP_NODES_F12 = new Set([
+      -500, // HandleBotError
+      1, 10, // ShowMetadata, UserPlatformRouting
+      100, 101, 102, 103, 104, 105, // Platform routing + SetEnv + InitContext
+      1800, 1802, 1803, 1804, // GenAI fallback chain
+      200, 201, 210, 300, // Main menu nodes
+    ]);
+    
     if (nodeType === 'A') {
       const commandValue = fields[COMMAND_COL]?.trim() || '';
       if (!commandValue) {
-        fields[COMMAND_COL] = 'SysAssignVariable';
-        // Also add default Parameter Input if missing
-        if (!fields[PARAM_INPUT_COL]?.trim()) {
-          fields[PARAM_INPUT_COL] = '{"set":{"PLACEHOLDER":"value"}}';
+        // SKIP critical startup nodes - injectRequiredStartupNodes handles these
+        if (CRITICAL_STARTUP_NODES_F12.has(nodeNum)) {
+          console.log(`[Sanitize] FIX 12: Skipping startup node ${nodeNum} - will be handled by startup injection`);
+        } else {
+          fields[COMMAND_COL] = 'SysAssignVariable';
+          // Also add default Parameter Input if missing
+          if (!fields[PARAM_INPUT_COL]?.trim()) {
+            fields[PARAM_INPUT_COL] = '{"set":{"PLACEHOLDER":"value"}}';
+          }
+          // Add Decision Variable and What Next if missing
+          if (!fields[DECISION_VAR_COL]?.trim()) {
+            fields[DECISION_VAR_COL] = 'success';
+          }
+          if (!fields[WHAT_NEXT_COL]?.trim()) {
+            fields[WHAT_NEXT_COL] = 'true~105|error~99990';
+          }
+          needsReconstruct = true;
+          fixesApplied++;
+          console.warn(`[Sanitize] FIX 12: Added SysAssignVariable to empty Action node ${nodeNum}`);
         }
-        // Add Decision Variable and What Next if missing
-        if (!fields[DECISION_VAR_COL]?.trim()) {
-          fields[DECISION_VAR_COL] = 'success';
-        }
-        if (!fields[WHAT_NEXT_COL]?.trim()) {
-          fields[WHAT_NEXT_COL] = 'true~105|error~99990';
-        }
-        needsReconstruct = true;
-        fixesApplied++;
-        console.warn(`[Sanitize] FIX 12: Added SysAssignVariable to empty Action node ${nodeNum}`);
       }
     }
     
@@ -1859,7 +2903,39 @@ export function sanitizeCSVForDeploy(csv: string): string {
     // Error: "Referenced global variable does not exist" means Variable column is incomplete
     // ========================================
     if (nodeType === 'A' && commandField === 'SysAssignVariable') {
-      const paramInput = fields[PARAM_INPUT_COL]?.trim() || '';
+      let paramInput = fields[PARAM_INPUT_COL]?.trim() || '';
+      
+      // FIX 13b: Ensure 'success' is in the payload if Decision Variable is 'success'
+      // Error: "proposed dir_field is not an element of the proposed payload"
+      const decVar = fields[DECISION_VAR_COL]?.trim();
+      if (decVar === 'success') {
+        try {
+          // If paramInput is empty, create it
+          if (!paramInput || paramInput === '{}') {
+            paramInput = '{"set":{"success":"true"}}';
+            fields[PARAM_INPUT_COL] = paramInput;
+            needsReconstruct = true;
+            fixesApplied++;
+            console.log(`[Sanitize] FIX 13b: Added default payload {"set":{"success":"true"}} for node ${nodeNum}`);
+          } else {
+            const parsed = JSON.parse(paramInput);
+            if (parsed.set && typeof parsed.set === 'object') {
+              // Check if 'success' key exists (case-insensitive)
+              const hasSuccess = Object.keys(parsed.set).some(k => k.toLowerCase() === 'success');
+              if (!hasSuccess) {
+                // Add success: "true" to the set object
+                parsed.set['success'] = 'true';
+                paramInput = JSON.stringify(parsed);
+                fields[PARAM_INPUT_COL] = paramInput;
+                needsReconstruct = true;
+                fixesApplied++;
+                console.log(`[Sanitize] FIX 13b: Added "success":"true" to payload for node ${nodeNum}`);
+              }
+            }
+          }
+        } catch { /* ignore JSON errors, handled elsewhere */ }
+      }
+
       if (paramInput) {
         try {
           const parsed = JSON.parse(paramInput);
@@ -1889,6 +2965,146 @@ export function sanitizeCSVForDeploy(csv: string): string {
           }
         } catch {
           // JSON parse failed, skip this fix
+        }
+      }
+    }
+    
+    // ========================================
+    // FIX 18: ValidateRegex - ensure Parameter Input has proper format
+    // Error: "Referenced global variable does not exist (value: LAST_USER_MESSAGE)"
+    // Happens when ValidateRegex node is missing the required Parameter Input config
+    // 
+    // The bundled script expects: {"regex": "...", "input": "value_to_validate"}
+    // where "input" should be the actual value or a variable reference like {VAR_NAME}
+    // 
+    // CRITICAL: {LAST_USER_MESSAGE} won't work unless that variable is declared somewhere
+    // We need to use the Variable column value from the previous decision node
+    // ========================================
+    const NODE_INPUT_COL = 16;
+    if (nodeType === 'A' && commandField === 'ValidateRegex') {
+      const paramInput = fields[PARAM_INPUT_COL]?.trim() || '';
+      const nodeInputCol = fields[NODE_INPUT_COL]?.trim() || '';
+      const variableCol = fields[VARIABLE_COL]?.trim() || '';
+      const nodeName = fields[2]?.toLowerCase() || ''; // Node Name column
+      const description = fields[14]?.toLowerCase() || ''; // Description column
+      
+      // Infer the regex pattern based on variable name or node name
+      const getRegexForType = (hint: string): { regex: string; varName: string } => {
+        const lowerHint = hint.toLowerCase();
+        if (lowerHint.includes('zip') || lowerHint.includes('postal')) {
+          return { regex: '^[0-9]{5}(-[0-9]{4})?$', varName: 'ZIP_CODE' };
+        } else if (lowerHint.includes('email')) {
+          return { regex: '^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$', varName: 'USER_EMAIL' };
+        } else if (lowerHint.includes('phone')) {
+          return { regex: '^[0-9]{10,15}$', varName: 'PHONE_NUMBER' };
+        } else if (lowerHint.includes('date')) {
+          return { regex: '^\\\\d{1,2}/\\\\d{1,2}/\\\\d{4}$', varName: 'DATE_VALUE' };
+        } else if (lowerHint.includes('ssn') || lowerHint.includes('social')) {
+          return { regex: '^[0-9]{3}-?[0-9]{2}-?[0-9]{4}$', varName: 'SSN_VALUE' };
+        } else if (lowerHint.includes('code') || lowerHint.includes('pin')) {
+          return { regex: '^[0-9]{4,6}$', varName: 'CODE_VALUE' };
+        }
+        // Default: alphanumeric
+        return { regex: '^[A-Za-z0-9]+$', varName: 'INPUT_VALUE' };
+      };
+      
+      // If Parameter Input is missing or doesn't have the required fields
+      let needsParamFix = false;
+      let regexPattern = '';
+      let targetVarName = variableCol || '';
+      
+      if (!paramInput) {
+        needsParamFix = true;
+        // Infer from variable column, node name, or description
+        const hint = variableCol || nodeName || description;
+        const inferred = getRegexForType(hint);
+        regexPattern = inferred.regex;
+        if (!targetVarName) targetVarName = inferred.varName;
+      } else {
+        // Parameter Input exists - check if it has the required fields
+        try {
+          const parsed = JSON.parse(paramInput);
+          // Check for both bundled script format (regex/input) and official format (global_vars/validation)
+          const hasBundledFormat = parsed.regex && parsed.input;
+          const hasOfficialFormat = parsed.global_vars && parsed.validation;
+          
+          if (!hasBundledFormat && !hasOfficialFormat) {
+            needsParamFix = true;
+            const hint = variableCol || nodeName || description;
+            const inferred = getRegexForType(hint);
+            regexPattern = inferred.regex;
+            if (!targetVarName) targetVarName = inferred.varName;
+          }
+        } catch {
+          // Invalid JSON - needs fix
+          needsParamFix = true;
+          const hint = variableCol || nodeName || description;
+          const inferred = getRegexForType(hint);
+          regexPattern = inferred.regex;
+          if (!targetVarName) targetVarName = inferred.varName;
+        }
+      }
+      
+      if (needsParamFix) {
+        targetVarName = targetVarName.toUpperCase();
+        
+        // Strategy: Use Node Input to reference the previous node where user typed their answer
+        // This is more reliable than using a variable reference that might not exist
+        // Format: "input_value: node_num" where node_num is typically the previous node
+        // Use findPreviousExistingNode to get actual previous node (not just nodeNum - 1 which may not exist)
+        const prevNodeNum = findPreviousExistingNode(nodeNum);
+        
+        // Check if Node Input is empty and we can set it
+        if (!nodeInputCol) {
+          fields[NODE_INPUT_COL] = `user_input: ${prevNodeNum}`;
+          console.log(`[Sanitize] FIX 18: Added Node Input for ValidateRegex at node ${nodeNum}: user_input: ${prevNodeNum}`);
+        }
+        
+        // Use the bundled script format with the Node Input reference
+        // The value from Node Input becomes available as {user_input}
+        const inputRef = nodeInputCol ? 
+          `{${nodeInputCol.split(':')[0].trim()}}` : // Use existing Node Input var name
+          '{user_input}'; // Use our newly set Node Input
+        
+        const newParamInput = JSON.stringify({
+          regex: regexPattern,
+          input: inputRef
+        });
+        fields[PARAM_INPUT_COL] = newParamInput;
+        needsReconstruct = true;
+        fixesApplied++;
+        console.log(`[Sanitize] FIX 18: Added ValidateRegex Parameter Input at node ${nodeNum}: ${newParamInput}`);
+        
+        // Also ensure Variable column is set - the ValidateRegex output variable
+        if (!fields[VARIABLE_COL]?.trim()) {
+          fields[VARIABLE_COL] = targetVarName;
+          console.log(`[Sanitize] FIX 18: Set Variable column for ValidateRegex at node ${nodeNum}: ${targetVarName}`);
+        }
+        
+        // Ensure Decision Variable matches what bundled script returns: 'success'
+        const currentDecVar = fields[DECISION_VAR_COL]?.trim() || '';
+        if (currentDecVar !== 'success') {
+          fields[DECISION_VAR_COL] = 'success';
+          console.log(`[Sanitize] FIX 18: Set Decision Variable to 'success' for ValidateRegex at node ${nodeNum}`);
+        }
+        
+        // Ensure What Next uses true/false pattern (bundled script returns success=true/false)
+        const whatNext = fields[WHAT_NEXT_COL]?.trim() || '';
+        if (whatNext) {
+          // Bundled ValidateRegex returns {success: "true"} or {success: "false"}
+          // What Next format should use: true~successNode|false~retryNode|error~errorNode
+          // If it currently uses 'success,true~' format, that's also valid
+          if (!whatNext.includes('true~') && !whatNext.includes('false~')) {
+            // Doesn't have the right format - try to fix
+            const fixedWhatNext = whatNext
+              .replace(/\bvalid\b/gi, 'success')
+              .replace(/\byes~/gi, 'true~')
+              .replace(/\bno~/gi, 'false~');
+            if (fixedWhatNext !== whatNext) {
+              fields[WHAT_NEXT_COL] = fixedWhatNext;
+              console.log(`[Sanitize] FIX 18: Fixed What Next for ValidateRegex at node ${nodeNum}: ${fixedWhatNext}`);
+            }
+          }
         }
       }
     }
@@ -2219,14 +3435,53 @@ export function preDeployValidation(csv: string, autoFix: boolean = false): PreD
 }
 
 /**
+ * Options for CSV generation
+ */
+export interface GenerationOptions {
+  /** Use sequential generation (default: true). Falls back to single-call on failure. */
+  useSequential?: boolean;
+  /** Progress callback for sequential generation */
+  onProgress?: (progress: SequentialProgress) => void;
+  /** Skip fallback to single-call on sequential failure */
+  noFallback?: boolean;
+}
+
+/**
  * Generate a Pypestream bot CSV using AI
+ * 
+ * By default, uses sequential generation which is faster and more reliable.
+ * Falls back to single-call generation if sequential fails.
  */
 export async function generateBotCSV(
   projectConfig: ProjectConfig,
   clarifyingQuestions: ClarifyingQuestion[],
   referenceFiles?: FileUpload[],
-  aiCredentials?: { apiKey?: string; provider?: 'anthropic' | 'google' }
+  aiCredentials?: { apiKey?: string; provider?: 'anthropic' | 'google' },
+  options?: GenerationOptions
 ): Promise<GenerationResult> {
+  const useSequential = options?.useSequential !== false;
+  
+  // Try sequential generation first (faster, more reliable)
+  if (useSequential) {
+    try {
+      console.log('[Generation] Using sequential generation...');
+      const result = await generateSequentially(
+        projectConfig,
+        clarifyingQuestions,
+        options?.onProgress
+      );
+      console.log('[Generation] Sequential generation succeeded');
+      return result;
+    } catch (seqError: any) {
+      console.warn('[Generation] Sequential generation failed:', seqError.message);
+      if (options?.noFallback) {
+        throw seqError;
+      }
+      console.log('[Generation] Falling back to single-call generation...');
+    }
+  }
+  
+  // Fallback: Original single-call generation
   // Fetch errors to avoid from the learning system (non-blocking on failure)
   let errorsToAvoidContext = '';
   try {
@@ -2276,9 +3531,20 @@ export async function generateBotCSV(
     throw new Error('Invalid response: missing CSV content');
   }
 
-  // Post-process CSV: normalize columns then fix alignment
+  // Post-process CSV: normalize columns, fix alignment, fix Decision Variables, then inject required startup nodes
   const normalizedCSV = normalizeCSVColumns(result.csv);
-  const fixedCSV = fixCSVColumnAlignment(normalizedCSV);
+  const alignedCSV = fixCSVColumnAlignment(normalizedCSV);
+  const decVarFixedCSV = fixDecisionVariables(alignedCSV);
+  
+  // CRITICAL: Inject required startup nodes if missing
+  // This ensures the bot ALWAYS has nodes 1, 10, 100-104, -500, 666, 999, 1800, 99990
+  const fixedCSV = injectRequiredStartupNodes(decVarFixedCSV);
+  
+  // Validate startup nodes are correctly configured
+  const startupIssues = validateStartupNodes(fixedCSV);
+  if (startupIssues.length > 0) {
+    console.warn('[Startup Validation] Issues found:', startupIssues);
+  }
 
   // Calculate node count and detect official nodes from CSV
   const stats = parseCSVStats(fixedCSV);
@@ -2325,6 +3591,11 @@ function normalizeCSVColumns(csv: string): string {
   let fixed = 0;
   let removed = 0;
   
+  // Track seen node numbers to prevent duplicates - first occurrence wins
+  // (startup nodes are added first, so they take precedence)
+  const seenNodeNums = new Set<number>();
+  let duplicates = 0;
+  
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
@@ -2337,6 +3608,13 @@ function normalizeCSVColumns(csv: string): string {
       removed++;
       continue;
     }
+    
+    // Skip duplicate node numbers - first occurrence wins
+    if (seenNodeNums.has(nodeNum)) {
+      duplicates++;
+      continue;
+    }
+    seenNodeNums.add(nodeNum);
     
     const nodeType = (fields[1] || '').toUpperCase();
     
@@ -2393,11 +3671,564 @@ function normalizeCSVColumns(csv: string): string {
     }
   }
   
-  if (fixed > 0 || removed > 0) {
-    console.log(`[CSV Normalize] Fixed ${fixed} rows with wrong column count, removed ${removed} invalid rows`);
+  if (fixed > 0 || removed > 0 || duplicates > 0) {
+    console.log(`[CSV Normalize] Fixed ${fixed} rows with wrong column count, removed ${removed} invalid rows, deduplicated ${duplicates} duplicate nodes`);
   }
   
   return normalizedLines.join('\n');
+}
+
+/**
+ * Fix Decision Variable mismatches for action nodes.
+ * Each action script has a specific output variable that must match the Decision Variable.
+ * Common AI mistakes: using "success" for SysMultiMatchRouting (should be "next_node" or "valid")
+ */
+function fixDecisionVariables(csv: string): string {
+  const lines = csv.split('\n');
+  if (lines.length < 2) return csv;
+  
+  const header = lines[0];
+  const fixedLines = [header];
+  let fixes = 0;
+  
+  // Command → Expected Decision Variable mapping
+  const COMMAND_DEC_VAR_MAP: Record<string, string> = {
+    'SysAssignVariable': 'success',
+    'SysShowMetadata': 'success',
+    'SysSetEnv': 'success',
+    'SysVariableReset': 'success',
+    'HandleBotError': 'error_type',
+    'UserPlatformRouting': 'success',
+    'GenAIFallback': 'result',
+    'ValidateRegex': 'success',
+    'ValidateDate': 'success',
+    'GetValue': 'success',
+    'SetVar': 'success',
+    'VarCheck': 'valid',
+    'LimitCounter': 'valid',
+    'BotToPlatform': 'success',
+    'EventsToGlobalVariableValues': 'success',
+    'SetFormID': 'success',
+  };
+  
+  // Scripts where DecVar should match Output (variable names)
+  const DECVAR_MATCHES_OUTPUT = new Set(['SysMultiMatchRouting']);
+  
+  // Column indices
+  const COL_TYPE = 1;
+  const COL_COMMAND = 13;
+  const COL_OUTPUT = 15;
+  const COL_DEC_VAR = 18;
+  
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    const fields = parseCSVLineForFix(line);
+    const nodeType = (fields[COL_TYPE] || '').toUpperCase();
+    
+    // Only fix Action nodes
+    if (nodeType !== 'A') {
+      fixedLines.push(line);
+      continue;
+    }
+    
+    const command = fields[COL_COMMAND] || '';
+    const currentDecVar = fields[COL_DEC_VAR] || '';
+    const currentOutput = fields[COL_OUTPUT] || '';
+    
+    let needsFix = false;
+    
+    // Special handling for SysMultiMatchRouting - DecVar should match Output
+    if (DECVAR_MATCHES_OUTPUT.has(command)) {
+      if (currentOutput && currentDecVar && currentDecVar !== currentOutput) {
+        console.log(`[DecVar Fix] Node ${fields[0]} (${command}): Fixing Decision Variable from "${currentDecVar}" to "${currentOutput}" (must match output)`);
+        fields[COL_DEC_VAR] = currentOutput;
+        needsFix = true;
+      } else if (!currentOutput && currentDecVar) {
+        // Output is missing, set it to match DecVar
+        fields[COL_OUTPUT] = currentDecVar;
+        needsFix = true;
+      } else if (currentOutput && !currentDecVar) {
+        // DecVar is missing, set it to match Output
+        fields[COL_DEC_VAR] = currentOutput;
+        needsFix = true;
+      } else if (!currentOutput && !currentDecVar) {
+        // Both missing, use default
+        fields[COL_OUTPUT] = 'next_node';
+        fields[COL_DEC_VAR] = 'next_node';
+        needsFix = true;
+      }
+    } else {
+      // For other commands, use the mapping
+      const expectedDecVar = COMMAND_DEC_VAR_MAP[command];
+      
+      if (expectedDecVar) {
+        // Always set to expected value for known commands
+        if (!currentDecVar || currentDecVar !== expectedDecVar) {
+          console.log(`[DecVar Fix] Node ${fields[0]} (${command}): Fixing Decision Variable from "${currentDecVar || '(empty)'}" to "${expectedDecVar}"`);
+          fields[COL_DEC_VAR] = expectedDecVar;
+          needsFix = true;
+        }
+        // Also fix output if missing
+        if (!currentOutput) {
+          fields[COL_OUTPUT] = expectedDecVar;
+        }
+      }
+    }
+    
+    if (needsFix) {
+      fixes++;
+      fixedLines.push(reconstructCSVLine(fields));
+    } else {
+      fixedLines.push(line);
+    }
+  }
+  
+  if (fixes > 0) {
+    console.log(`[DecVar Fix] Fixed ${fixes} Decision Variable mismatches`);
+  }
+  
+  return fixedLines.join('\n');
+}
+
+import { SYSTEM_NODES, STARTUP_NODES, GENAI_FALLBACK_NODES, returnMenu, type NodeTemplate } from '../data/node-templates';
+
+/**
+ * Convert a NodeTemplate to a 26-column CSV row string.
+ * Uses the canonical templates from node-templates.ts
+ */
+function nodeTemplateToCSVRow(template: NodeTemplate): string {
+  const escapeField = (val: any): string => {
+    if (val === undefined || val === null) return '';
+    const str = String(val);
+    if (!str) return '';
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+  
+  // Build 26-column array
+  const cols: string[] = new Array(26).fill('');
+  cols[0] = String(template.num);           // Node Number
+  cols[1] = template.type;                   // Node Type
+  cols[2] = template.name;                   // Node Name
+  cols[3] = template.intent || '';           // Intent
+  cols[4] = '';                              // Entity Type
+  cols[5] = '';                              // Entity
+  cols[6] = template.nluDisabled || '';      // NLU Disabled?
+  cols[7] = template.nextNodes || '';        // Next Nodes
+  cols[8] = template.message || '';          // Message
+  cols[9] = template.richType || '';         // Rich Asset Type
+  cols[10] = template.richContent || '';     // Rich Asset Content
+  cols[11] = template.ansReq || '';          // Answer Required?
+  cols[12] = template.behaviors || '';       // Behaviors
+  cols[13] = template.command || '';         // Command
+  cols[14] = template.description || '';     // Description
+  cols[15] = template.output || '';          // Output
+  cols[16] = template.nodeInput || '';       // Node Input
+  cols[17] = template.paramInput || '';      // Parameter Input
+  cols[18] = template.decVar || '';          // Decision Variable
+  cols[19] = template.whatNext || '';        // What Next?
+  cols[20] = '';                             // Node Tags
+  cols[21] = '';                             // Skill Tag
+  cols[22] = template.variable || '';        // Variable
+  cols[23] = '';                             // Platform Flag
+  cols[24] = template.flows || '';           // Flows
+  cols[25] = '';                             // CSS Classname
+  
+  return cols.map(escapeField).join(',');
+}
+
+/**
+ * Build the REQUIRED_STARTUP_NODES map from node-templates.ts
+ * This ensures we use the canonical, validated templates
+ */
+function buildRequiredStartupNodes(): Record<number, string> {
+  const nodes: Record<number, string> = {};
+  
+  // Add all system nodes
+  for (const template of SYSTEM_NODES) {
+    nodes[template.num] = nodeTemplateToCSVRow(template);
+  }
+  
+  // Add all startup nodes (includes context initialization at 105)
+  for (const template of STARTUP_NODES) {
+    nodes[template.num] = nodeTemplateToCSVRow(template);
+  }
+  
+  // Add GenAI fallback nodes (1800, 1802, 1803, 1804) for intelligent NLU
+  for (const template of GENAI_FALLBACK_NODES) {
+    nodes[template.num] = nodeTemplateToCSVRow(template);
+  }
+  
+  // Add fallback main menu nodes (these aren't in node-templates.ts yet)
+  // NOTE: Node 300 is intentionally NOT included here - it's a FLOW node, not a startup node.
+  // The AI generates actual flow content for node 300+. We only include it as a FALLBACK_ONLY
+  // node that gets injected ONLY if the AI fails to generate any flows.
+  const fallbackNodes: NodeTemplate[] = [
+    {
+      num: 200, type: 'D', name: 'MainMenu → Welcome',
+      nextNodes: '210',
+      message: 'Welcome! How can I help you today?',
+      richType: 'quick_reply',
+      richContent: '{"type":"static","options":[{"label":"Get Help","dest":300},{"label":"Talk to Agent","dest":999}]}',
+      ansReq: '1',
+      flows: 'main_menu_entry',
+    },
+    {
+      num: 210, type: 'A', name: 'IntentRouting → Route Input',
+      command: 'SysMultiMatchRouting', description: 'Routes user input', output: 'next_node',
+      paramInput: '{"global_vars":"LAST_USER_MESSAGE","input_vars":"help,support,agent,question"}',
+      decVar: 'next_node', whatNext: 'help~300|support~300|agent~999|question~300|false~1800|error~1800',
+    },
+    returnMenu(201), // Uses the template function for return menu
+  ];
+  
+  for (const template of fallbackNodes) {
+    nodes[template.num] = nodeTemplateToCSVRow(template);
+  }
+  
+  // Node 300 is a FALLBACK ONLY - only injected if AI doesn't generate any flows
+  // This is a safety net, not the default behavior
+  const fallbackNode300: NodeTemplate = {
+    num: 300, type: 'D', name: 'Help → Information',
+    nextNodes: '201',
+    message: 'I can help you with questions and connect you to a live agent if needed.',
+    richType: 'buttons',
+    richContent: '{"type":"static","options":[{"label":"Main Menu","dest":200},{"label":"Talk to Agent","dest":999},{"label":"End Chat","dest":666}]}',
+    ansReq: '1',
+  };
+  nodes[300] = nodeTemplateToCSVRow(fallbackNode300);
+  
+  console.log(`[Startup Templates] Loaded ${Object.keys(nodes).length} node templates from node-templates.ts`);
+  return nodes;
+}
+
+// Build the required nodes map at module load time
+const REQUIRED_STARTUP_NODES = buildRequiredStartupNodes();
+
+// Nodes that are ONLY injected if missing - not overwritten if AI generated them
+// Node 300 is here because it's the first flow's start node - AI generates the actual content
+const FALLBACK_ONLY_NODES = new Set<number>([300]);
+// Nodes that are ALWAYS required and will be injected/fixed if missing or broken
+// Includes: startup (1-105), error handling (-500, 99990), system (666, 999), GenAI fallback chain (1800-1804), and main menu (200, 201, 210)
+// NOTE: Node 300+ are FLOW nodes - NOT critical startup. They're generated by AI for each flow.
+const CRITICAL_STARTUP_NODES = new Set([1, 10, 100, 101, 102, 103, 104, 105, -500, 666, 999, 1800, 1802, 1803, 1804, 99990, 200, 201, 210]);
+
+/**
+ * Check if a node is critically misconfigured (wrong type, missing command, etc.)
+ */
+function isNodeBroken(fields: string[], nodeNum: number): boolean {
+  if (!fields || fields.length < 20) return true;
+  
+  const nodeType = fields[1]?.toUpperCase();
+  const command = fields[13]?.trim();
+  const whatNext = fields[19]?.trim();
+  
+  // Node -500 MUST be Action node with HandleBotError
+  // This is the global error handler - if broken, the bot shows "technical difficulties" immediately
+  if (nodeNum === -500) {
+    if (nodeType !== 'A') {
+      console.log(`[isNodeBroken] Node -500 has wrong type: ${nodeType} (expected A)`);
+      return true;
+    }
+    if (!command || command !== 'HandleBotError') {
+      console.log(`[isNodeBroken] Node -500 has wrong/missing command: "${command}" (expected HandleBotError)`);
+      return true;
+    }
+    if (!whatNext || !whatNext.includes('~')) {
+      console.log(`[isNodeBroken] Node -500 has missing What Next routing`);
+      return true;
+    }
+  }
+  
+  // Node 1 must be Action node with ShowMetadata
+  if (nodeNum === 1) {
+    if (nodeType !== 'A') return true;
+    if (!command || !command.includes('ShowMetadata')) return true;
+    if (!whatNext || !whatNext.includes('~')) return true;
+  }
+  
+  // Node 10 must be Action node with UserPlatformRouting
+  if (nodeNum === 10) {
+    if (nodeType !== 'A') return true;
+    if (!command || !command.includes('UserPlatformRouting')) return true;
+  }
+  
+  // Nodes 100, 101, 102 must be Action nodes with SysAssignVariable
+  if (nodeNum === 100 || nodeNum === 101 || nodeNum === 102) {
+    if (nodeType !== 'A') return true;
+    if (!command || !command.includes('SysAssignVariable')) return true;
+  }
+  
+  // Node 104 must be Action node with SysSetEnv and route correctly
+  if (nodeNum === 104) {
+    if (nodeType !== 'A') return true;
+    if (!command || !command.includes('SysSetEnv')) return true;
+    if (!whatNext || !whatNext.includes('~')) return true;
+  }
+  
+  // Node 1800 MUST be Action node with GenAIFallback (NOT a Decision node!)
+  // This is critical - Decision nodes can't have Decision Variable, which causes validation errors
+  // ALSO: Must have out_of_scope intent - NLU-enabled bots REQUIRE this
+  if (nodeNum === 1800) {
+    if (nodeType !== 'A') {
+      console.log(`[isNodeBroken] Node 1800 has wrong type: ${nodeType} (expected A - must be Action node with GenAIFallback)`);
+      return true;
+    }
+    if (!command || !command.includes('GenAIFallback')) {
+      console.log(`[isNodeBroken] Node 1800 has wrong/missing command: "${command}" (expected GenAIFallback)`);
+      return true;
+    }
+    if (!whatNext || !whatNext.includes('~')) {
+      console.log(`[isNodeBroken] Node 1800 has missing What Next routing`);
+      return true;
+    }
+    // Strict check for Decision Variable - must be 'result'
+    const decVar = fields[18]?.trim();
+    if (decVar !== 'result') {
+      console.log(`[isNodeBroken] Node 1800 has wrong Decision Variable: "${decVar}" (expected "result")`);
+      return true;
+    }
+    // CRITICAL: Check for out_of_scope intent - NLU bots REQUIRE this
+    const intent = fields[3]?.trim().toLowerCase();
+    if (!intent || intent !== 'out_of_scope') {
+      console.log(`[isNodeBroken] Node 1800 missing or wrong intent: "${intent}" (expected "out_of_scope")`);
+      return true;
+    }
+  }
+  
+  // Main Menu nodes (200, 201, 300) MUST be Decision nodes, NOT Action nodes
+  // If AI generates these as Action nodes with SysAssignVariable, they will fail with
+  // "proposed dir_field is not an element of the proposed payload" error
+  if (nodeNum === 200 || nodeNum === 201 || nodeNum === 300) {
+    if (nodeType !== 'D') {
+      console.log(`[isNodeBroken] Node ${nodeNum} has wrong type: ${nodeType} (expected D - must be Decision node)`);
+      return true;
+    }
+    // Decision nodes should NOT have Command or Decision Variable
+    if (command) {
+      console.log(`[isNodeBroken] Node ${nodeNum} has Command "${command}" but should be empty for Decision node`);
+      return true;
+    }
+    const decVar = fields[18]?.trim();
+    if (decVar) {
+      console.log(`[isNodeBroken] Node ${nodeNum} has Decision Variable "${decVar}" but should be empty for Decision node`);
+      return true;
+    }
+  }
+  
+  // Node 210 MUST be Action node with SysMultiMatchRouting for intent routing
+  if (nodeNum === 210) {
+    if (nodeType !== 'A') {
+      console.log(`[isNodeBroken] Node 210 has wrong type: ${nodeType} (expected A)`);
+      return true;
+    }
+    if (!command || !command.includes('SysMultiMatchRouting')) {
+      console.log(`[isNodeBroken] Node 210 has wrong/missing command: "${command}" (expected SysMultiMatchRouting)`);
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Inject required startup nodes if they're missing from the CSV.
+ * This ensures the bot ALWAYS has a working startup flow.
+ * 
+ * Two categories:
+ * 1. CRITICAL_STARTUP_NODES - Always injected if missing OR BROKEN (nodes 1, 10, 100-104, etc.)
+ * 2. FALLBACK_ONLY_NODES - Only injected if missing AND no alternative exists (200, 201, 210, 300)
+ */
+function injectRequiredStartupNodes(csv: string): string {
+  const lines = csv.split('\n');
+  if (lines.length < 1) return csv;
+  
+  const header = lines[0];
+  const dataLines = lines.slice(1).filter(l => l.trim());
+  
+  // Parse existing node numbers and their lines
+  const existingNodes = new Map<number, { line: string; fields: string[] }>();
+  for (const line of dataLines) {
+    const fields = parseCSVLineForFix(line);
+    const nodeNum = parseInt(fields[0], 10);
+    if (!isNaN(nodeNum)) {
+      existingNodes.set(nodeNum, { line, fields });
+    }
+  }
+  
+  // Determine which nodes need to be injected or replaced
+  const nodesToInject: number[] = [];
+  const nodesToReplace: number[] = [];
+  const requiredNodeNumbers = Object.keys(REQUIRED_STARTUP_NODES).map(n => parseInt(n, 10));
+  
+  for (const nodeNum of requiredNodeNumbers) {
+    const isCritical = CRITICAL_STARTUP_NODES.has(nodeNum);
+    const isFallback = FALLBACK_ONLY_NODES.has(nodeNum);
+    const existing = existingNodes.get(nodeNum);
+    const nodeExists = !!existing;
+    
+    if (isCritical) {
+      if (!nodeExists) {
+        // Missing critical node - inject
+        nodesToInject.push(nodeNum);
+      } else if (isNodeBroken(existing.fields, nodeNum)) {
+        // Broken critical node - replace
+        nodesToReplace.push(nodeNum);
+      }
+    } else if (isFallback && !nodeExists) {
+      // Missing fallback node - inject
+      nodesToInject.push(nodeNum);
+    }
+  }
+  
+  if (nodesToInject.length === 0 && nodesToReplace.length === 0) {
+    console.log('[Startup Inject] All required startup nodes present and valid');
+    return csv;
+  }
+  
+  // Log what's happening
+  if (nodesToReplace.length > 0) {
+    console.warn(`[Startup Inject] REPLACING broken critical nodes: ${nodesToReplace.join(', ')}`);
+  }
+  if (nodesToInject.length > 0) {
+    const criticalMissing = nodesToInject.filter(n => CRITICAL_STARTUP_NODES.has(n));
+    const fallbackMissing = nodesToInject.filter(n => FALLBACK_ONLY_NODES.has(n));
+    if (criticalMissing.length > 0) {
+      console.warn(`[Startup Inject] CRITICAL nodes missing: ${criticalMissing.join(', ')}`);
+    }
+    if (fallbackMissing.length > 0) {
+      console.log(`[Startup Inject] Fallback nodes needed: ${fallbackMissing.join(', ')}`);
+    }
+  }
+  
+  // Build the final data lines
+  const finalDataLines: string[] = [];
+  const nodesToRemove = new Set(nodesToReplace);
+  
+  // Keep existing lines except those being replaced
+  for (const line of dataLines) {
+    const fields = parseCSVLineForFix(line);
+    const nodeNum = parseInt(fields[0], 10);
+    if (!nodesToRemove.has(nodeNum)) {
+      finalDataLines.push(line);
+    }
+  }
+  
+  // Add injected and replacement nodes
+  const allNodesToAdd = [...nodesToInject, ...nodesToReplace];
+  for (const nodeNum of allNodesToAdd) {
+    const nodeLine = REQUIRED_STARTUP_NODES[nodeNum];
+    if (nodeLine) {
+      finalDataLines.push(nodeLine);
+      const action = nodesToReplace.includes(nodeNum) ? 'REPLACED' : 'INJECTED';
+      console.log(`[Startup Inject] ${action} node ${nodeNum}`);
+    }
+  }
+  
+  // Sort by node number for cleaner output
+  finalDataLines.sort((a, b) => {
+    const numA = parseInt(parseCSVLineForFix(a)[0], 10) || 0;
+    const numB = parseInt(parseCSVLineForFix(b)[0], 10) || 0;
+    return numA - numB;
+  });
+  
+  const totalChanges = nodesToInject.length + nodesToReplace.length;
+  console.log(`[Startup Inject] Made ${totalChanges} changes (${nodesToInject.length} injected, ${nodesToReplace.length} replaced)`);
+  
+  return [header, ...finalDataLines].join('\n');
+}
+
+/**
+ * Validate that critical startup nodes exist and are correctly configured.
+ * Returns an array of issues found (after injection, these should be minimal).
+ */
+export function validateStartupNodes(csv: string): string[] {
+  const issues: string[] = [];
+  const lines = csv.split('\n');
+  
+  // Parse nodes into a map
+  const nodeMap = new Map<number, string[]>();
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const fields = parseCSVLineForFix(line);
+    const nodeNum = parseInt(fields[0], 10);
+    if (!isNaN(nodeNum)) {
+      nodeMap.set(nodeNum, fields);
+    }
+  }
+  
+  // Check node -500 (HandleBotError) - CRITICAL for error handling
+  if (!nodeMap.has(-500)) {
+    issues.push('CRITICAL: Node -500 (HandleBotError) is missing - bot will crash on any error');
+  } else {
+    const node = nodeMap.get(-500)!;
+    const nodeType = node[1]?.toUpperCase();
+    const command = node[13]?.trim();
+    const whatNext = node[19]?.trim();
+    
+    if (nodeType !== 'A') {
+      issues.push('CRITICAL: Node -500 must be Action type (A), not Decision');
+    }
+    if (!command || command !== 'HandleBotError') {
+      issues.push(`CRITICAL: Node -500 must use HandleBotError command, found: "${command}"`);
+    }
+    if (!whatNext || !whatNext.includes('~')) {
+      issues.push(`CRITICAL: Node -500 missing valid What Next? routing, found: "${whatNext}"`);
+    }
+  }
+  
+  // Check node 1 exists and is configured correctly (after injection this should always be true)
+  if (!nodeMap.has(1)) {
+    issues.push('CRITICAL: Node 1 (SysShowMetadata) is missing - bot cannot start');
+  } else {
+    const node1 = nodeMap.get(1)!;
+    const nodeType = node1[1]?.toUpperCase();
+    const command = node1[13]?.trim();
+    const whatNext = node1[19]?.trim();
+    
+    if (nodeType !== 'A') {
+      issues.push('Node 1 must be Action type (A), not Decision');
+    }
+    if (!command || !command.includes('ShowMetadata')) {
+      issues.push(`Node 1 should use SysShowMetadata command, found: "${command}"`);
+    }
+    if (!whatNext || !whatNext.includes('~')) {
+      issues.push(`Node 1 missing valid What Next? routing, found: "${whatNext}"`);
+    }
+  }
+  
+  // Check node 10 exists (UserPlatformRouting)
+  if (!nodeMap.has(10)) {
+    issues.push('Node 10 (UserPlatformRouting) is missing');
+  } else {
+    const node = nodeMap.get(10)!;
+    const command = node[13]?.trim();
+    if (!command || command !== 'UserPlatformRouting') {
+      issues.push(`Node 10 must use UserPlatformRouting command, found: "${command}"`);
+    }
+  }
+  
+  // Check node 104 exists
+  if (!nodeMap.has(104)) {
+    issues.push('Node 104 (SysSetEnv) is missing');
+  }
+  
+  // Check error handler exists
+  if (!nodeMap.has(99990)) {
+    issues.push('Node 99990 (Error Message) is missing');
+  }
+  
+  // Check node 200 exists (main menu) - should be injected if missing
+  if (!nodeMap.has(200)) {
+    issues.push('Node 200 (Main Menu) is missing');
+  }
+  
+  return issues;
 }
 
 /** Find the start of a JSON field (starts with { ) in parsed fields */
@@ -2436,13 +4267,33 @@ function validateFieldTypes(fields: string[], nodeType: string): string[] {
   
   // For Decision nodes: clear Action-only columns (13-15, 17-19)
   if (nodeType === 'D') {
-    // Only clear if they contain obvious non-Decision content
-    // Don't clear blindly — some values might be correctly placed
+    // Decision nodes should NOT have: Command(13), Description(14), Output(15), 
+    // Parameter Input(17), Decision Variable(18), What Next(19)
+    
+    // Move any message from Node Input (col 16) to Message (col 8) if Message is empty
+    if (!fields[8]?.trim() && fields[16]?.trim()) {
+      fields[8] = fields[16];
+      fields[16] = '';
+    }
+    
+    // Clear Action-only columns
+    fields[13] = ''; // Command
+    fields[14] = ''; // Description
+    fields[15] = ''; // Output
+    fields[17] = ''; // Parameter Input
+    fields[18] = ''; // Decision Variable
+    fields[19] = ''; // What Next
   }
   
   // For Action nodes: clear Decision-only columns (8-12)
   if (nodeType === 'A') {
-    // Same — don't clear blindly
+    // Action nodes should NOT have: Message(8), Rich Asset Type(9), Rich Asset Content(10),
+    // Answer Required(11), Behaviors(12)
+    fields[8] = '';  // Message
+    fields[9] = '';  // Rich Asset Type
+    fields[10] = ''; // Rich Asset Content
+    fields[11] = ''; // Answer Required
+    fields[12] = ''; // Behaviors
   }
   
   // Variable column (22) must be ALL_CAPS
@@ -2497,7 +4348,9 @@ function fixCSVColumnAlignment(csv: string): string {
     'SysAssignVariable', 'SysMultiMatchRouting', 'SysShowMetadata', 'SysSetEnv', 
     'SysVariableReset', 'HandleBotError', 'SlackLogger', 'UserPlatformRouting',
     'GetValue', 'SetVar', 'VarCheck', 'ValidateRegex', 'ValidateDate',
-    'ListPickerGenerator', 'GetAllProducts', 'ProductRecommendation', 'ProductQA'
+    'ListPickerGenerator', 'GetAllProducts', 'ProductRecommendation', 'ProductQA',
+    'GenAIFallback', 'GetGPTCompletion', 'BotToPlatform', 'LimitCounter',  // Added GenAI and other common scripts
+    'EventsToGlobalVariableValues', 'SetFormID', 'PostEventToBQ'
   ]);
   
   // Rich asset types
@@ -2936,9 +4789,14 @@ export async function refineCSV(
 
   const result = await response.json();
   
-  // Post-process the refined CSV
+  // Post-process the refined CSV: normalize, align, fix Decision Variables, then inject startup nodes
   const normalizedRefinedCSV = normalizeCSVColumns(result.csv);
-  const fixedCSV = fixCSVColumnAlignment(normalizedRefinedCSV);
+  const alignedCSV = fixCSVColumnAlignment(normalizedRefinedCSV);
+  const decVarFixedCSV = fixDecisionVariables(alignedCSV);
+  
+  // CRITICAL: Re-inject required startup nodes after refinement
+  // AI refinement might accidentally remove or break startup nodes
+  const fixedCSV = injectRequiredStartupNodes(decVarFixedCSV);
 
   return {
     csv: fixedCSV,
@@ -3184,6 +5042,14 @@ export async function validateAndRefineIteratively(
         allFixesMade.push(...recheck.fixes.filter(f => !f.startsWith('WARNING:')));
       }
       
+      // CRITICAL: Re-inject startup nodes after programmatic fixes
+      // This ensures protected startup nodes (1800 GenAIFallback, etc.) are always correct
+      const startupFixedCSV = injectRequiredStartupNodes(currentCSV);
+      if (startupFixedCSV !== currentCSV) {
+        console.log('[Refine] 🔧 Re-injected startup nodes after programmatic fixes');
+        currentCSV = startupFixedCSV;
+      }
+      
       // If all errors were fixed programmatically, skip AI entirely
       if (errorsForAI.length === 0) {
         console.log(`[Refine] ✅ All errors fixed programmatically! Skipping AI refinement.`);
@@ -3304,6 +5170,9 @@ export async function validateAndRefineIteratively(
       if (programmaticFixesApplied.length > 0) {
         console.log(`[AI Refine] Applied ${programmaticFixesApplied.length} programmatic fallback fixes`);
         refinement.fixesMade.push(...programmaticFixesApplied);
+        
+        // CRITICAL: Re-inject startup nodes after fallback fixes
+        verifiedCsv = injectRequiredStartupNodes(verifiedCsv);
       }
       
       currentCSV = verifiedCsv;
@@ -3508,4 +5377,1297 @@ function formatValidationErrors(errors: any[]): string[] {
     
     return [JSON.stringify(err)];
   }).filter(Boolean);
+}
+
+// ============================================
+// SEQUENTIAL CSV GENERATION
+// ============================================
+
+/**
+ * Standard 26-column CSV header for Pypestream bots
+ */
+export const CSV_HEADER = 'Node Number,Node Type,Node Name,Intent,Entity Type,Entity,NLU Disabled?,Next Nodes,Message,Rich Asset Type,Rich Asset Content,Answer Required?,Behaviors,Command,Description,Output,Node Input,Parameter Input,Decision Variable,What Next?,Node Tags,Skill Tag,Variable,Platform Flag,Flows,CSS Classname';
+
+/**
+ * Flow definition for sequential generation
+ */
+export interface FlowPlan {
+  name: string;
+  description: string;
+  startNode: number;
+  endNode: number;
+}
+
+/**
+ * Progress callback for sequential generation
+ */
+export interface SequentialProgress {
+  step: 'startup' | 'planning' | 'flow' | 'assembly' | 'validation';
+  status: 'started' | 'done' | 'error';
+  flowName?: string;
+  rows?: number;
+  totalFlows?: number;
+  currentFlow?: number;
+  message?: string;
+}
+
+/**
+ * Main menu option from flow planning
+ */
+interface MainMenuOption {
+  label: string;
+  description?: string;
+  flowName?: string;
+  startNode?: number;
+}
+
+/**
+ * Options for startup node generation
+ */
+interface StartupNodeOptions {
+  targetCompany?: string;
+  mainMenuOptions?: MainMenuOption[];
+  companyContext?: string;  // Knowledge about the company for AI responses
+  botPersona?: string;      // How the bot should act/speak
+  projectDescription?: string;  // Description of what the bot does
+}
+
+/**
+ * Generate startup nodes programmatically from templates.
+ * No AI needed - uses canonical templates from node-templates.ts.
+ * 
+ * Returns CSV rows (without header) for:
+ * - System nodes: -500, 666, 999, 1800-1804, 99990
+ * - Startup flow: 1, 10, 100-104, 105
+ * - Main menu: 200, 201, 210, 300 (customized based on options)
+ */
+export function generateStartupNodes(options?: StartupNodeOptions): string[] {
+  const rows: string[] = [];
+  
+  // Build company context for AI from project details
+  const companyName = options?.targetCompany || '';
+  const companyContext = options?.companyContext || options?.projectDescription || '';
+  const botPersona = options?.botPersona || 
+    (companyName ? `a friendly and helpful ${companyName} customer service assistant` : 'a friendly and helpful customer service assistant');
+  
+  // Add all system nodes
+  for (const template of SYSTEM_NODES) {
+    rows.push(nodeTemplateToCSVRow(template));
+  }
+  
+  // Add all startup nodes (1, 10, 100-104)
+  for (const template of STARTUP_NODES) {
+    // Customize node 105 (InitContext) with actual company info
+    if (template.num === 105) {
+      const customTemplate = { ...template };
+      const contextVars: Record<string, string> = {
+        LAST_TOPIC: '',
+        LAST_ENTITY: '',
+        CONVERSATION_CONTEXT: '',
+        CONTEXT_FLOW: '',
+        COMPANY_NAME: companyName,
+        COMPANY_CONTEXT: companyContext,
+        BOT_PERSONA: botPersona,
+        CONVERSATION_HISTORY: ''
+      };
+      customTemplate.paramInput = JSON.stringify({ set: contextVars });
+      rows.push(nodeTemplateToCSVRow(customTemplate));
+    } else {
+      rows.push(nodeTemplateToCSVRow(template));
+    }
+  }
+  
+  // Add GenAI fallback nodes (if defined)
+  if (typeof GENAI_FALLBACK_NODES !== 'undefined') {
+    for (const template of GENAI_FALLBACK_NODES) {
+      // Skip if already added as part of SYSTEM_NODES
+      if (!SYSTEM_NODES.some(s => s.num === template.num)) {
+        rows.push(nodeTemplateToCSVRow(template));
+      }
+    }
+  }
+  
+  // Generate customized main menu nodes (200, 201, 210, 300)
+  const mainMenuNodes = generateMainMenuNodes(options);
+  for (const template of mainMenuNodes) {
+    rows.push(nodeTemplateToCSVRow(template));
+  }
+  
+  console.log(`[Sequential] Generated ${rows.length} startup/system nodes programmatically`);
+  return rows;
+}
+
+/**
+ * Generate customized main menu nodes based on options
+ */
+function generateMainMenuNodes(options?: StartupNodeOptions): NodeTemplate[] {
+  const targetCompany = options?.targetCompany || '';
+  const mainMenuOptions = options?.mainMenuOptions || [];
+  
+  // Build welcome message - more engaging and specific
+  let welcomeMessage = 'Hi! What can I help you with?';
+  if (targetCompany) {
+    // Create a more engaging, specific welcome
+    welcomeMessage = `Hi! I'm your ${targetCompany} assistant. What can I help you with?`;
+  }
+  
+  // Build quick reply options from mainMenuOptions
+  let quickReplyOptions: { label: string; dest: number }[] = [];
+  let intentRouting: { keyword: string; dest: number }[] = [];
+  
+  if (mainMenuOptions.length > 0) {
+    // Use planned menu options
+    quickReplyOptions = mainMenuOptions.map((opt, idx) => ({
+      label: opt.label,
+      dest: opt.startNode || (300 + idx * 100)
+    }));
+    
+    // Generate intent routing keywords from labels
+    intentRouting = mainMenuOptions.map((opt, idx) => {
+      const keywords = opt.label.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(' ')
+        .filter((w: string) => w.length > 2);
+      return {
+        keyword: keywords[0] || opt.flowName || `flow${idx}`,
+        dest: opt.startNode || (300 + idx * 100)
+      };
+    });
+  } else {
+    // Default fallback options
+    quickReplyOptions = [
+      { label: 'Get Help', dest: 300 },
+      { label: 'Talk to Agent', dest: 999 }
+    ];
+    intentRouting = [
+      { keyword: 'help', dest: 300 },
+      { keyword: 'support', dest: 300 },
+      { keyword: 'question', dest: 300 }
+    ];
+  }
+  
+  // Always add "Talk to Agent" if not present
+  if (!quickReplyOptions.some(o => o.dest === 999)) {
+    quickReplyOptions.push({ label: 'Talk to Agent', dest: 999 });
+    intentRouting.push({ keyword: 'agent', dest: 999 });
+  }
+  
+  // Limit to 6 options max (UX best practice)
+  if (quickReplyOptions.length > 6) {
+    quickReplyOptions = quickReplyOptions.slice(0, 5);
+    quickReplyOptions.push({ label: 'Talk to Agent', dest: 999 });
+    intentRouting = intentRouting.slice(0, 6);
+  }
+  
+  // Build JSON for quick reply
+  const quickReplyContent = JSON.stringify({
+    type: 'static',
+    options: quickReplyOptions.map(o => ({ label: o.label, dest: o.dest }))
+  });
+  
+  // Build intent routing What Next? and input_vars
+  const inputVars = intentRouting.map(r => r.keyword).join(',');
+  const whatNextParts = intentRouting.map(r => `${r.keyword}~${r.dest}`);
+  whatNextParts.push('false~1800', 'error~1800'); // Fallback to GenAI
+  const whatNext = whatNextParts.join('|');
+  
+  console.log(`[MainMenu] Generated ${quickReplyOptions.length} menu options for "${targetCompany || 'bot'}"`);
+  
+  // Core menu nodes - 200 (welcome), 210 (intent routing), 201 (return menu)
+  // NOTE: We do NOT generate node 300 here - that's the first flow's start node!
+  // The AI generates node 300+ as part of the actual conversation flows.
+  // This prevents the generic "Help → Information" from overwriting the AI-generated flow content.
+  const nodes: NodeTemplate[] = [
+    {
+      num: 200, type: 'D', name: 'MainMenu → Welcome',
+      nextNodes: '210',
+      message: welcomeMessage,
+      richType: 'quick_reply',
+      richContent: quickReplyContent,
+      ansReq: '1',
+      flows: 'main_menu_entry',
+    },
+    {
+      num: 210, type: 'A', name: 'IntentRouting → Route Input',
+      command: 'SysMultiMatchRouting', description: 'Routes user input', output: 'next_node',
+      paramInput: `{"global_vars":"LAST_USER_MESSAGE","input_vars":"${inputVars}"}`,
+      decVar: 'next_node', whatNext: whatNext,
+    },
+    returnMenu(201), // Uses the template function for return menu
+  ];
+  
+  // Only add fallback node 300 if no mainMenuOptions were provided
+  // (meaning no flows were planned and we need a catch-all)
+  if (mainMenuOptions.length === 0) {
+    console.log(`[MainMenu] No flows planned - adding fallback node 300`);
+    nodes.push({
+      num: 300, type: 'D', name: 'Help → Information',
+      nextNodes: '201',
+      message: targetCompany 
+        ? `I can help you with questions about ${targetCompany}. What would you like to know?`
+        : 'I can help you with questions and connect you to a live agent if needed.',
+      richType: 'buttons',
+      richContent: '{"type":"static","options":[{"label":"Main Menu","dest":200},{"label":"Talk to Agent","dest":999},{"label":"End Chat","dest":666}]}',
+      ansReq: '1',
+    });
+  }
+  
+  return nodes;
+}
+
+/**
+ * Generate the complete startup CSV with header.
+ * Ready to be combined with flow-generated nodes.
+ */
+export function generateStartupCSV(): string {
+  const rows = generateStartupNodes();
+  return CSV_HEADER + '\n' + rows.join('\n');
+}
+
+/**
+ * Convert JSON nodes array to CSV rows.
+ * Handles the output from /api/generate-flow.
+ */
+export function nodesToCSVRows(nodes: any[]): string[] {
+  const rows: string[] = [];
+  
+  // Helper: Check if a string looks like comma-separated node numbers
+  const looksLikeNodeNumbers = (str: string): boolean => {
+    if (!str || typeof str !== 'string') return false;
+    // Pattern: "123,456,789" or "123" - all comma-separated numbers
+    return /^\d+(\s*,\s*\d+)*$/.test(str.trim());
+  };
+  
+  // Helper: Check if a string looks like a message (has words, not just numbers)
+  const looksLikeMessage = (str: string): boolean => {
+    if (!str || typeof str !== 'string') return false;
+    // Contains letters and isn't just JSON/numbers
+    return /[a-zA-Z]{3,}/.test(str) && !str.startsWith('{') && !str.startsWith('[');
+  };
+  
+  for (const node of nodes) {
+    // =========================================
+    // FIX: Detect and correct field confusion
+    // AI sometimes puts nextNodes in message field and vice versa
+    // =========================================
+    let message = node.message || '';
+    let nextNodes = node.nextNodes || '';
+    let nodeInput = node.nodeInput || '';
+    const richType = (node.richType || '').toLowerCase();
+    const hasButtonRouting = ['button', 'buttons', 'listpicker', 'quick_reply', 'carousel'].includes(richType);
+    
+    // Case 0: message contains rich asset type names (AI put type in wrong field!)
+    // e.g., message = "quick_reply" when it should be in richType
+    const RICH_ASSET_TYPES = ['quick_reply', 'button', 'buttons', 'listpicker', 'carousel', 'datepicker', 'timepicker', 'webview', 'file_upload', 'star_rating', 'imagebutton'];
+    if (message && RICH_ASSET_TYPES.includes(message.toLowerCase().trim())) {
+      console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - message contains rich asset type "${message}" (clearing - should be in richType field)`);
+      message = '';
+    }
+    
+    // Case 1: message contains node numbers (ALWAYS wrong - messages should never be just numbers!)
+    // This is a CRITICAL fix - node numbers in message field will display to users
+    if (looksLikeNodeNumbers(message)) {
+      console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - message contains node numbers "${message}" (clearing)`);
+      
+      // For button/listpicker nodes, DON'T move to nextNodes - buttons handle routing via dest
+      // For non-button nodes with empty nextNodes, only use if it's a SINGLE number
+      if (!hasButtonRouting && !nextNodes) {
+        const nodeNums = message.split(',').map((n: string) => n.trim()).filter((n: string) => n);
+        if (nodeNums.length === 1) {
+          nextNodes = nodeNums[0];
+          console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - moved single node number to nextNodes`);
+        }
+        // Multiple comma-separated numbers are probably button dests - just discard
+      }
+      
+      // ALWAYS clear message if it's just node numbers - never display numbers to users
+      message = '';
+    }
+    
+    // Case 2: Multiple node numbers in nextNodes with button routing - clear nextNodes
+    // Buttons handle routing via dest, nextNodes should be empty or single NLU fallback
+    if (hasButtonRouting && nextNodes && nextNodes.includes(',')) {
+      console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - clearing multiple nextNodes (buttons handle routing via dest)`);
+      nextNodes = '';
+    }
+    
+    // Case 3: nodeInput contains message text but message is empty
+    if (looksLikeMessage(nodeInput) && !message) {
+      console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - moving nodeInput→message (was in wrong field)`);
+      message = nodeInput;
+      nodeInput = '';
+    }
+    
+    // Case 4: description contains message text but message is empty  
+    if (looksLikeMessage(node.description) && !message && node.type !== 'A') {
+      console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - moving description→message`);
+      message = node.description;
+    }
+    
+    // Case 5: Decision node with no message but has name - use name as fallback message
+    // (Better than showing nothing or showing node numbers)
+    if (!message && node.type === 'D' && node.name) {
+      // Don't use name if it contains technical terms like "→" or node numbers
+      const cleanName = node.name.replace(/→.*$/, '').replace(/[0-9]+/g, '').trim();
+      if (cleanName.length > 5 && looksLikeMessage(cleanName)) {
+        console.log(`[nodesToCSVRows] FIX: Node ${node.num || node.nodeNum} - using name as fallback message: "${cleanName}"`);
+        message = cleanName;
+      }
+    }
+    
+    // Handle richContent - AI might return it as an object instead of a string
+    let richContent = node.richContent || node.richAssetContent || '';
+    if (richContent && typeof richContent === 'object') {
+      // Convert object to JSON string
+      richContent = JSON.stringify(richContent);
+    }
+    
+    // DEBUG: Log richContent conversion
+    const nodeNumForLog = node.num || node.nodeNum;
+    if (richType || richContent) {
+      console.log(`[nodesToCSVRows] Node ${nodeNumForLog}: richType="${richType}", richContent=${String(richContent).substring(0, 80)}...`);
+    } else if (node.type === 'D') {
+      console.log(`[nodesToCSVRows] WARNING: Decision node ${nodeNumForLog} has NO richType or richContent!`);
+    }
+    
+    // Handle paramInput - AI might return it as an object
+    let paramInput = node.paramInput || node.parameterInput || '';
+    if (paramInput && typeof paramInput === 'object') {
+      paramInput = JSON.stringify(paramInput);
+    }
+    
+    // Map JSON node properties to CSV columns (26 columns)
+    // Use the corrected message/nextNodes/nodeInput values
+    const fields = [
+      node.num || node.nodeNum || '',           // 0: Node Number
+      node.type || 'D',                          // 1: Node Type
+      node.name || '',                           // 2: Node Name
+      node.intent || '',                         // 3: Intent
+      node.entityType || '',                     // 4: Entity Type
+      node.entity || '',                         // 5: Entity
+      node.nluDisabled || '',                    // 6: NLU Disabled?
+      nextNodes,                                 // 7: Next Nodes (corrected)
+      message,                                   // 8: Message (corrected)
+      node.richType || node.richAssetType || '',       // 9: Rich Asset Type
+      richContent,                                     // 10: Rich Asset Content
+      node.ansReq || node.answerRequired || '',  // 11: Answer Required?
+      node.behaviors || '',                      // 12: Behaviors
+      node.command || '',                        // 13: Command
+      node.description || '',                    // 14: Description
+      node.output || '',                         // 15: Output
+      nodeInput,                                       // 16: Node Input (corrected)
+      paramInput,                                      // 17: Parameter Input
+      node.decVar || node.decisionVariable || '', // 18: Decision Variable
+      node.whatNext || '',                       // 19: What Next?
+      node.nodeTags || '',                       // 20: Node Tags
+      node.skillTag || '',                       // 21: Skill Tag
+      node.variable || '',                       // 22: Variable
+      node.platformFlag || '',                   // 23: Platform Flag
+      node.flows || '',                          // 24: Flows
+      node.cssClass || node.cssClassname || '',  // 25: CSS Classname
+    ];
+    
+    // Validate we have exactly 26 columns
+    if (fields.length !== 26) {
+      console.error(`[nodesToCSVRows] Node ${node.num} has ${fields.length} fields instead of 26!`);
+    }
+    
+    // Escape fields for CSV - MUST handle all special characters
+    const escapedFields = fields.map((f, idx) => {
+      const str = String(f ?? '');
+      // Always quote fields that contain: comma, quote, newline, or are richContent/paramInput
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || idx === 10 || idx === 17) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    });
+    
+    const row = escapedFields.join(',');
+    
+    // Validate the row has correct column count by counting unquoted commas
+    const rowColumns = parseCSVLineForFix(row).length;
+    if (rowColumns !== 26) {
+      console.error(`[nodesToCSVRows] Node ${node.num} row has ${rowColumns} columns after escaping (expected 26)`);
+      console.error(`[nodesToCSVRows] Problematic row: ${row.substring(0, 200)}...`);
+    }
+    
+    rows.push(row);
+  }
+  
+  console.log(`[nodesToCSVRows] Converted ${nodes.length} nodes to ${rows.length} CSV rows`);
+  return rows;
+}
+
+// ============================================
+// NODE NUMBER RESERVATION AND PROTECTION SYSTEM
+// ============================================
+
+/**
+ * Reserved node number ranges for Pypestream bots.
+ * AI-generated flows must NOT use these ranges.
+ * 
+ * This ensures critical infrastructure nodes are never overwritten.
+ */
+export const RESERVED_NODE_RANGES = {
+  // Startup/infrastructure (nodes 1-199)
+  STARTUP: { start: 1, end: 105, description: 'Startup flow (metadata, platform routing, env)' },
+  MAIN_MENU: { start: 200, end: 299, description: 'Main menu and navigation (200, 201, 210)' },
+  
+  // System nodes (special negative and high numbers)
+  ERROR_HANDLER: { start: -500, end: -500, description: 'Global error handler' },
+  END_CHAT: { start: 666, end: 666, description: 'End chat node' },
+  LIVE_AGENT: { start: 999, end: 999, description: 'Live agent transfer' },
+  OUT_OF_SCOPE: { start: 1800, end: 1804, description: 'GenAI fallback chain (NLU fallback)' },
+  ERROR_MESSAGE: { start: 99990, end: 99990, description: 'Error recovery message' },
+  
+  // Reserved for future system use
+  SYSTEM_RESERVED: { start: 9000, end: 9999, description: 'Reserved for system nodes' },
+} as const;
+
+/**
+ * Safe flow node ranges - AI can generate flows in these ranges.
+ * Each flow gets a 100-node block (e.g., 300-399, 400-499, etc.)
+ */
+export const FLOW_NODE_RANGES = {
+  FIRST_FLOW: { start: 300, end: 399 },
+  SECOND_FLOW: { start: 400, end: 499 },
+  THIRD_FLOW: { start: 500, end: 599 },
+  FOURTH_FLOW: { start: 600, end: 699 },
+  FIFTH_FLOW: { start: 700, end: 799 },
+  // Additional flows continue: 800-899, 900-999 (stops before 9000)
+  MAX_FLOW_END: 8999, // Flows cannot exceed this
+} as const;
+
+/**
+ * Get the set of all reserved node numbers (individual nodes, not ranges)
+ */
+function getReservedNodeNumbers(): Set<number> {
+  const reserved = new Set<number>();
+  
+  // Add specific system nodes
+  reserved.add(-500);  // HandleBotError
+  reserved.add(1);     // SysShowMetadata
+  reserved.add(10);    // UserPlatformRouting
+  reserved.add(100);   // SetVar iOS
+  reserved.add(101);   // SetVar Android
+  reserved.add(102);   // SetVar Desktop
+  reserved.add(103);   // Platform Fallback
+  reserved.add(104);   // SysSetEnv
+  reserved.add(105);   // InitContext
+  reserved.add(200);   // MainMenu Welcome
+  reserved.add(201);   // ReturnMenu
+  reserved.add(210);   // IntentRouting
+  reserved.add(666);   // EndChat
+  reserved.add(999);   // LiveAgent
+  reserved.add(1800);  // OutOfScope GenAI
+  reserved.add(1802);  // GenAIResponse
+  reserved.add(1803);  // RouteDetectedIntent
+  reserved.add(1804);  // FallbackFail
+  reserved.add(99990); // ErrorMessage
+  
+  return reserved;
+}
+
+/**
+ * Check if a node number is in a reserved range
+ */
+function isNodeNumberReserved(nodeNum: number): boolean {
+  // Check specific reserved nodes
+  if (getReservedNodeNumbers().has(nodeNum)) {
+    return true;
+  }
+  
+  // Check reserved ranges
+  const ranges = RESERVED_NODE_RANGES;
+  
+  // Startup range (1-105)
+  if (nodeNum >= ranges.STARTUP.start && nodeNum <= ranges.STARTUP.end) return true;
+  
+  // Main menu range (200-299) - only 200, 201, 210 are actually reserved
+  // But we check specifically to allow 220, 230, etc. for sub-menus if needed
+  if (nodeNum === 200 || nodeNum === 201 || nodeNum === 210) return true;
+  
+  // Out of scope chain
+  if (nodeNum >= ranges.OUT_OF_SCOPE.start && nodeNum <= ranges.OUT_OF_SCOPE.end) return true;
+  
+  // System reserved (9000-9999)
+  if (nodeNum >= ranges.SYSTEM_RESERVED.start && nodeNum <= ranges.SYSTEM_RESERVED.end) return true;
+  
+  return false;
+}
+
+/**
+ * Get the expected flow range for a flow index (0-based)
+ */
+function getFlowRange(flowIndex: number): { start: number; end: number } {
+  const baseStart = 300;
+  const rangeSize = 100;
+  const start = baseStart + (flowIndex * rangeSize);
+  const end = start + rangeSize - 1;
+  
+  // Cap at max flow end to avoid system reserved range
+  return {
+    start,
+    end: Math.min(end, FLOW_NODE_RANGES.MAX_FLOW_END)
+  };
+}
+
+/**
+ * Validate and remap AI-generated nodes to prevent conflicts with reserved nodes.
+ * 
+ * This function:
+ * 1. Identifies any nodes using reserved node numbers
+ * 2. Remaps conflicting nodes to safe ranges
+ * 3. Updates all references (Next Nodes, What Next, button destinations) to use new numbers
+ * 4. Returns the corrected nodes with a log of changes
+ */
+export function validateAndRemapNodeNumbers(
+  nodes: any[],
+  flowIndex: number,
+  reservedNodes: Set<number>
+): { nodes: any[]; remappings: Map<number, number>; warnings: string[] } {
+  const warnings: string[] = [];
+  const remappings = new Map<number, number>();
+  
+  // Get the expected range for this flow
+  const flowRange = getFlowRange(flowIndex);
+  let nextAvailableNode = flowRange.start;
+  
+  // Track which node numbers are already used in this flow
+  const usedInFlow = new Set<number>();
+  
+  // First pass: identify conflicts and plan remappings
+  for (const node of nodes) {
+    const nodeNum = node.num || node.nodeNum;
+    if (nodeNum === undefined) continue;
+    
+    const numVal = parseInt(String(nodeNum), 10);
+    if (isNaN(numVal)) continue;
+    
+    // Check if this node conflicts with reserved nodes
+    if (reservedNodes.has(numVal) || isNodeNumberReserved(numVal)) {
+      // Find next available node in flow range
+      while (usedInFlow.has(nextAvailableNode) || reservedNodes.has(nextAvailableNode)) {
+        nextAvailableNode++;
+        if (nextAvailableNode > flowRange.end) {
+          // Overflow to next available range
+          const overflowRange = getFlowRange(flowIndex + 1);
+          nextAvailableNode = overflowRange.start;
+          warnings.push(`Flow ${flowIndex} overflowed into next range (${overflowRange.start}+)`);
+        }
+      }
+      
+      remappings.set(numVal, nextAvailableNode);
+      warnings.push(`Node ${numVal} conflicts with reserved range, remapped to ${nextAvailableNode}`);
+      usedInFlow.add(nextAvailableNode);
+      nextAvailableNode++;
+    } else {
+      usedInFlow.add(numVal);
+      
+      // Check if node is outside its expected flow range (but not a conflict)
+      if (numVal < flowRange.start || numVal > flowRange.end) {
+        // Allow nodes that route TO system nodes (like 999, 666, 99990)
+        // but warn if it's creating its own out-of-range node
+        if (!isNodeNumberReserved(numVal)) {
+          warnings.push(`Node ${numVal} is outside expected flow range (${flowRange.start}-${flowRange.end})`);
+        }
+      }
+    }
+  }
+  
+  // If no remappings needed, return early
+  if (remappings.size === 0) {
+    return { nodes, remappings, warnings };
+  }
+  
+  console.log(`[NodeRemap] Remapping ${remappings.size} conflicting nodes in flow ${flowIndex}`);
+  
+  // Second pass: apply remappings to nodes and all references
+  const remappedNodes = nodes.map(node => {
+    const newNode = { ...node };
+    
+    // Remap the node's own number
+    const nodeNum = parseInt(String(node.num || node.nodeNum), 10);
+    if (!isNaN(nodeNum) && remappings.has(nodeNum)) {
+      newNode.num = remappings.get(nodeNum);
+      newNode.nodeNum = remappings.get(nodeNum);
+    }
+    
+    // Remap nextNodes references
+    if (newNode.nextNodes) {
+      newNode.nextNodes = remapNodeReferences(String(newNode.nextNodes), remappings);
+    }
+    
+    // Remap whatNext references
+    if (newNode.whatNext) {
+      newNode.whatNext = remapWhatNextReferences(String(newNode.whatNext), remappings);
+    }
+    
+    // Remap rich asset content (button/listpicker destinations)
+    if (newNode.richContent) {
+      newNode.richContent = remapRichAssetReferences(newNode.richContent, remappings);
+    }
+    
+    return newNode;
+  });
+  
+  return { nodes: remappedNodes, remappings, warnings };
+}
+
+/**
+ * Remap node numbers in a comma-separated Next Nodes string
+ */
+function remapNodeReferences(nextNodes: string, remappings: Map<number, number>): string {
+  if (!nextNodes || remappings.size === 0) return nextNodes;
+  
+  return nextNodes.split(/[,|]/).map(n => {
+    const num = parseInt(n.trim(), 10);
+    if (!isNaN(num) && remappings.has(num)) {
+      return String(remappings.get(num));
+    }
+    return n.trim();
+  }).join(',');
+}
+
+/**
+ * Remap node numbers in What Next? routing string (format: value~node|value~node)
+ */
+function remapWhatNextReferences(whatNext: string, remappings: Map<number, number>): string {
+  if (!whatNext || remappings.size === 0) return whatNext;
+  
+  return whatNext.split('|').map(part => {
+    const [value, nodeStr] = part.split('~');
+    if (!nodeStr) return part;
+    
+    const num = parseInt(nodeStr.trim(), 10);
+    if (!isNaN(num) && remappings.has(num)) {
+      return `${value}~${remappings.get(num)}`;
+    }
+    return part;
+  }).join('|');
+}
+
+/**
+ * Remap node numbers in rich asset content (button/listpicker destinations)
+ */
+function remapRichAssetReferences(richContent: any, remappings: Map<number, number>): any {
+  if (!richContent || remappings.size === 0) return richContent;
+  
+  // Handle string content (could be JSON or pipe format)
+  if (typeof richContent === 'string') {
+    // Try to parse as JSON
+    if (richContent.startsWith('{') || richContent.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(richContent);
+        const remapped = remapRichAssetReferences(parsed, remappings);
+        return JSON.stringify(remapped);
+      } catch {
+        // Not valid JSON, try pipe format
+      }
+    }
+    
+    // Pipe format: Label~dest|Label~dest
+    if (richContent.includes('~')) {
+      return richContent.split('|').map((part: string) => {
+        const match = part.match(/^(.+)~(\d+)$/);
+        if (match) {
+          const [, label, destStr] = match;
+          const dest = parseInt(destStr, 10);
+          if (remappings.has(dest)) {
+            return `${label}~${remappings.get(dest)}`;
+          }
+        }
+        return part;
+      }).join('|');
+    }
+    
+    return richContent;
+  }
+  
+  // Handle object content (JSON format)
+  if (typeof richContent === 'object' && richContent !== null) {
+    const newContent = { ...richContent };
+    
+    if (Array.isArray(newContent.options)) {
+      newContent.options = newContent.options.map((opt: any) => {
+        if (opt.dest !== undefined) {
+          const dest = typeof opt.dest === 'string' ? parseInt(opt.dest, 10) : opt.dest;
+          if (!isNaN(dest) && remappings.has(dest)) {
+            return { ...opt, dest: remappings.get(dest) };
+          }
+        }
+        return opt;
+      });
+    }
+    
+    return newContent;
+  }
+  
+  return richContent;
+}
+
+/**
+ * Comprehensive node number alignment and protection.
+ * Run this BEFORE assembling flows to ensure no conflicts.
+ */
+export function alignFlowNodeNumbers(
+  flowRowsArrays: string[][],
+  reservedNodes: Set<number>
+): { aligned: string[][]; report: NodeAlignmentReport } {
+  const report: NodeAlignmentReport = {
+    totalFlows: flowRowsArrays.length,
+    remappedNodes: 0,
+    warnings: [],
+    flowRanges: []
+  };
+  
+  const aligned: string[][] = [];
+  
+  for (let flowIdx = 0; flowIdx < flowRowsArrays.length; flowIdx++) {
+    const flowRows = flowRowsArrays[flowIdx];
+    const flowRange = getFlowRange(flowIdx);
+    
+    report.flowRanges.push({
+      flowIndex: flowIdx,
+      expectedRange: `${flowRange.start}-${flowRange.end}`,
+      actualNodes: []
+    });
+    
+    // Parse rows into node objects with field confusion detection
+    const nodes: any[] = [];
+    for (const row of flowRows) {
+      const fields = parseCSVLineForFix(row);
+      const nodeNum = parseInt(fields[0], 10);
+      if (isNaN(nodeNum)) continue;
+      
+      report.flowRanges[flowIdx].actualNodes.push(nodeNum);
+      
+      // =========================================
+      // FIX: Detect node numbers in message field (should NEVER happen)
+      // This catches issues at the CSV level after initial conversion
+      // =========================================
+      let message = fields[8] || '';
+      let nextNodes = fields[7] || '';
+      const richType = (fields[9] || '').toLowerCase();
+      const hasButtonRouting = ['button', 'buttons', 'listpicker', 'quick_reply', 'carousel'].includes(richType);
+      
+      // Pattern: looks like comma-separated node numbers (e.g., "510,520,530")
+      if (/^\d+(\s*,\s*\d+)*$/.test(message.trim()) && message.trim()) {
+        console.log(`[alignFlowNodeNumbers] FIX: Node ${nodeNum} has node numbers in message field: "${message}"`);
+        
+        // For button nodes, DO NOT move to nextNodes - buttons handle routing
+        // Only move to nextNodes if single number and no button routing
+        if (!hasButtonRouting && !nextNodes) {
+          const nodeNums = message.split(',').map(n => n.trim()).filter(n => n);
+          if (nodeNums.length === 1) {
+            nextNodes = nodeNums[0];
+          }
+        }
+        
+        message = ''; // Clear - will need to be regenerated or use fallback
+        report.warnings.push(`Node ${nodeNum}: Cleared node numbers from message field (was: ${fields[8]})`);
+      }
+      
+      // FIX: Multiple node numbers in nextNodes with button routing - clear it
+      if (hasButtonRouting && nextNodes && nextNodes.includes(',')) {
+        console.log(`[alignFlowNodeNumbers] FIX: Node ${nodeNum} clearing multiple nextNodes (buttons handle routing)`);
+        nextNodes = '';
+        report.warnings.push(`Node ${nodeNum}: Cleared multiple nextNodes (buttons handle routing via dest)`);
+      }
+      
+      nodes.push({
+        num: nodeNum,
+        type: fields[1],
+        name: fields[2],
+        intent: fields[3],
+        entityType: fields[4],
+        entity: fields[5],
+        nluDisabled: fields[6],
+        nextNodes: nextNodes,  // Use potentially fixed value
+        message: message,      // Use potentially fixed value
+        richType: fields[9],
+        richContent: fields[10],
+        ansReq: fields[11],
+        behaviors: fields[12],
+        command: fields[13],
+        description: fields[14],
+        output: fields[15],
+        nodeInput: fields[16],
+        paramInput: fields[17],
+        decVar: fields[18],
+        whatNext: fields[19],
+        nodeTags: fields[20],
+        skillTag: fields[21],
+        variable: fields[22],
+        platformFlag: fields[23],
+        flows: fields[24],
+        cssClass: fields[25],
+        _originalRow: row
+      });
+    }
+    
+    // Validate and remap if needed
+    const { nodes: remappedNodes, remappings, warnings } = validateAndRemapNodeNumbers(
+      nodes, 
+      flowIdx, 
+      reservedNodes
+    );
+    
+    report.remappedNodes += remappings.size;
+    report.warnings.push(...warnings);
+    
+    // Convert back to CSV rows
+    const alignedRows = remappedNodes.map(node => nodesToCSVRows([node])[0]);
+    aligned.push(alignedRows);
+  }
+  
+  // Log alignment report
+  if (report.remappedNodes > 0 || report.warnings.length > 0) {
+    console.log(`[NodeAlignment] Report:`);
+    console.log(`  - Total flows: ${report.totalFlows}`);
+    console.log(`  - Nodes remapped: ${report.remappedNodes}`);
+    if (report.warnings.length > 0) {
+      console.log(`  - Warnings: ${report.warnings.length}`);
+      report.warnings.slice(0, 5).forEach(w => console.log(`    • ${w}`));
+      if (report.warnings.length > 5) {
+        console.log(`    ... and ${report.warnings.length - 5} more`);
+      }
+    }
+  } else {
+    console.log(`[NodeAlignment] All ${report.totalFlows} flows aligned correctly, no conflicts detected`);
+  }
+  
+  return { aligned, report };
+}
+
+interface NodeAlignmentReport {
+  totalFlows: number;
+  remappedNodes: number;
+  warnings: string[];
+  flowRanges: {
+    flowIndex: number;
+    expectedRange: string;
+    actualNodes: number[];
+  }[];
+}
+
+/**
+ * Log a comprehensive inventory of all nodes in the CSV.
+ * Groups nodes by their functional category (startup, menu, flows, system).
+ * Useful for debugging node number conflicts.
+ */
+function logNodeInventory(csv: string, stage: string = ''): void {
+  const lines = csv.split('\n');
+  if (lines.length < 2) return;
+  
+  const inventory = {
+    startup: [] as number[],       // 1-105
+    mainMenu: [] as number[],      // 200-299
+    flows: [] as { range: string; nodes: number[] }[],  // 300+
+    system: [] as number[],        // 666, 999, 1800-1804, 99990, -500
+    other: [] as number[]          // Anything else
+  };
+  
+  // Initialize flow ranges
+  for (let i = 0; i < 8; i++) {
+    const start = 300 + (i * 100);
+    inventory.flows.push({ range: `${start}-${start + 99}`, nodes: [] });
+  }
+  
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    
+    const fields = parseCSVLineForFix(line);
+    const nodeNum = parseInt(fields[0], 10);
+    if (isNaN(nodeNum)) continue;
+    
+    // Categorize node
+    if (nodeNum >= 1 && nodeNum <= 105) {
+      inventory.startup.push(nodeNum);
+    } else if (nodeNum >= 200 && nodeNum <= 299) {
+      inventory.mainMenu.push(nodeNum);
+    } else if (nodeNum >= 300 && nodeNum <= 999) {
+      const flowIdx = Math.floor((nodeNum - 300) / 100);
+      if (flowIdx >= 0 && flowIdx < inventory.flows.length) {
+        inventory.flows[flowIdx].nodes.push(nodeNum);
+      } else {
+        inventory.other.push(nodeNum);
+      }
+    } else if (nodeNum === -500 || nodeNum === 666 || nodeNum === 999 || 
+               (nodeNum >= 1800 && nodeNum <= 1804) || nodeNum === 99990) {
+      inventory.system.push(nodeNum);
+    } else {
+      inventory.other.push(nodeNum);
+    }
+  }
+  
+  // Log summary
+  const stagePrefix = stage ? `[${stage}] ` : '';
+  console.log(`\n${stagePrefix}📊 Node Inventory:`);
+  console.log(`  Startup (1-105): ${inventory.startup.length} nodes [${inventory.startup.slice(0, 8).join(', ')}${inventory.startup.length > 8 ? '...' : ''}]`);
+  console.log(`  Main Menu (200-299): ${inventory.mainMenu.length} nodes [${inventory.mainMenu.join(', ')}]`);
+  
+  const activeFlows = inventory.flows.filter(f => f.nodes.length > 0);
+  for (const flow of activeFlows) {
+    console.log(`  Flow ${flow.range}: ${flow.nodes.length} nodes [${flow.nodes.slice(0, 5).join(', ')}${flow.nodes.length > 5 ? '...' : ''}]`);
+  }
+  
+  console.log(`  System (-500, 666, 999, 1800+, 99990): ${inventory.system.length} nodes [${inventory.system.join(', ')}]`);
+  
+  if (inventory.other.length > 0) {
+    console.log(`  ⚠️ Other/Unexpected: ${inventory.other.length} nodes [${inventory.other.join(', ')}]`);
+  }
+  
+  const totalNodes = inventory.startup.length + inventory.mainMenu.length + 
+                     inventory.flows.reduce((sum, f) => sum + f.nodes.length, 0) + 
+                     inventory.system.length + inventory.other.length;
+  console.log(`  TOTAL: ${totalNodes} nodes\n`);
+}
+
+/**
+ * Assemble multiple flow CSVs and run validation pipeline.
+ * Combines startup nodes with generated flows, then runs all fixes.
+ */
+export function assembleAndValidateCSV(
+  startupRows: string[],
+  flowRowsArrays: string[][]
+): string {
+  // Extract node numbers from startup rows (these are protected and take precedence)
+  const startupNodeNums = new Set<number>();
+  for (const row of startupRows) {
+    const nodeNum = parseInt(row.split(',')[0], 10);
+    if (!isNaN(nodeNum)) {
+      startupNodeNums.add(nodeNum);
+    }
+  }
+  
+  // Add all reserved system nodes to the protected set
+  const reservedNodes = new Set([...startupNodeNums, ...getReservedNodeNumbers()]);
+  
+  // STEP 1: Align flow node numbers BEFORE assembly
+  // This remaps any conflicting node numbers to safe ranges
+  const { aligned: alignedFlowRows, report } = alignFlowNodeNumbers(flowRowsArrays, reservedNodes);
+  
+  if (report.remappedNodes > 0) {
+    console.log(`[Sequential] Node alignment remapped ${report.remappedNodes} conflicting nodes`);
+  }
+  
+  // Combine all rows with header, filtering out any AI-generated duplicates of startup nodes
+  const allRows = [CSV_HEADER, ...startupRows];
+  let duplicatesFiltered = 0;
+  
+  for (const flowRows of alignedFlowRows) {
+    for (const row of flowRows) {
+      const nodeNum = parseInt(row.split(',')[0], 10);
+      // Skip rows that duplicate startup node numbers - startup nodes take precedence
+      if (!isNaN(nodeNum) && startupNodeNums.has(nodeNum)) {
+        console.log(`[Sequential] Filtered duplicate node ${nodeNum} from AI-generated flow (startup template takes precedence)`);
+        duplicatesFiltered++;
+        continue;
+      }
+      allRows.push(row);
+    }
+  }
+  
+  if (duplicatesFiltered > 0) {
+    console.log(`[Sequential] Filtered ${duplicatesFiltered} duplicate nodes that conflicted with startup templates`);
+  }
+  
+  let csv = allRows.join('\n');
+  console.log(`[Sequential] Assembled ${allRows.length - 1} total rows`);
+  
+  // Generate and log node inventory for debugging
+  logNodeInventory(csv, 'After Assembly');
+  
+  // Helper to trace node 1800's state for debugging
+  const traceNode1800 = (stage: string, csvContent: string) => {
+    const lines = csvContent.split('\n');
+    for (const line of lines) {
+      if (line.startsWith('1800,') || line.startsWith('"1800",')) {
+        const fields = parseCSVLineForFix(line);
+        const cmd = fields[13] || '(empty)';
+        const decVar = fields[18] || '(empty)';
+        console.log(`[Node1800 Trace] ${stage}: command="${cmd}", decVar="${decVar}"`);
+        return;
+      }
+    }
+    console.log(`[Node1800 Trace] ${stage}: NODE NOT FOUND`);
+  };
+  
+  traceNode1800('After assembly', csv);
+  
+  // Run the existing validation pipeline
+  csv = normalizeCSVColumns(csv);
+  console.log('[Sequential] Normalized columns');
+  traceNode1800('After normalizeCSVColumns', csv);
+  
+  csv = fixCSVColumnAlignment(csv);
+  console.log('[Sequential] Fixed column alignment');
+  traceNode1800('After fixCSVColumnAlignment', csv);
+  
+  csv = fixDecisionVariables(csv);
+  console.log('[Sequential] Fixed decision variables');
+  traceNode1800('After fixDecisionVariables', csv);
+  
+  // Run structural pre-validation
+  const { csv: preValidatedCsv, fixes } = structuralPreValidation(csv);
+  if (fixes.length > 0) {
+    console.log(`[Sequential] Pre-validation applied ${fixes.length} fixes`);
+  }
+  csv = preValidatedCsv;
+  traceNode1800('After structuralPreValidation', csv);
+  
+  // Run sanitization for deploy
+  const sanitizedCsv = sanitizeCSVForDeploy(csv);
+  if (sanitizedCsv !== csv) {
+    console.log('[Sequential] Sanitization applied fixes');
+  }
+  csv = sanitizedCsv;
+  traceNode1800('After sanitizeCSVForDeploy', csv);
+  
+  // CRITICAL: Inject/fix required startup nodes LAST
+  // This ensures nodes like 1800 (GenAIFallback) have correct configuration
+  // regardless of what the AI generated or what other fixes did
+  const startupFixedCsv = injectRequiredStartupNodes(csv);
+  if (startupFixedCsv !== csv) {
+    console.log('[Sequential] Startup nodes injected/fixed');
+  }
+  csv = startupFixedCsv;
+  
+  return csv;
+}
+
+/**
+ * Sequential generation - orchestrates the full pipeline.
+ * 
+ * 1. Generate startup nodes programmatically (instant)
+ * 2. Call /api/plan-flows to identify needed flows (5-10s)
+ * 3. For each flow, call /api/generate-flow (10-20s each)
+ * 4. Assemble and validate (instant)
+ */
+export async function generateSequentially(
+  projectConfig: ProjectConfig,
+  clarifyingQuestions: ClarifyingQuestion[] = [],
+  onProgress?: (progress: SequentialProgress) => void
+): Promise<GenerationResult> {
+  const startTime = performance.now();
+  
+  try {
+    // Step 1: Use pre-planned flows from Architecture page if available, otherwise plan now
+    onProgress?.({ step: 'planning', status: 'started' });
+    
+    let flows: FlowPlan[];
+    let mainMenuOptions: MainMenuOption[] | undefined;
+    
+    // Check for pre-planned flows from SolutionArchitecturePage
+    const prePlannedFlows = (window as any).__plannedFlows as FlowPlan[] | undefined;
+    const prePlannedMenu = (window as any).__plannedMenuOptions as MainMenuOption[] | undefined;
+    
+    // Check for flow previews - conversation structures the user has seen/approved
+    const flowPreviews = (window as any).__flowPreviews as Record<string, any[]> | undefined;
+    
+    if (prePlannedFlows && prePlannedFlows.length > 0) {
+      // Use the flows from the architecture review
+      flows = prePlannedFlows;
+      mainMenuOptions = prePlannedMenu;
+      console.log(`[Sequential] Using ${flows.length} pre-planned flows from Architecture review`);
+      if (flowPreviews) {
+        console.log(`[Sequential] Have ${Object.keys(flowPreviews).length} flow previews to maintain consistency`);
+      }
+      
+      // Clear the pre-planned data so it's not reused on next build
+      delete (window as any).__plannedFlows;
+      delete (window as any).__plannedMenuOptions;
+      delete (window as any).__flowPreviews;
+    } else {
+      // No pre-planned flows, call the planning API
+      // Only pass serializable fields - avoid passing full projectConfig which may contain DOM refs or blobs
+      const planResponse = await fetch('/api/plan-flows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectConfig: {
+            projectName: projectConfig.projectName,
+            projectType: projectConfig.projectType,
+            description: projectConfig.description,
+            targetCompany: projectConfig.targetCompany
+          }, 
+          clarifyingQuestions 
+        })
+      });
+      
+      if (!planResponse.ok) {
+        throw new Error(`Flow planning failed: ${await planResponse.text()}`);
+      }
+      
+      const planResult = await planResponse.json() as { 
+        flows: FlowPlan[]; 
+        mainMenuOptions?: MainMenuOption[];
+      };
+      flows = planResult.flows;
+      mainMenuOptions = planResult.mainMenuOptions;
+    }
+    
+    onProgress?.({ step: 'planning', status: 'done', totalFlows: flows.length });
+    console.log(`[Sequential] Step 1: Planned ${flows.length} flows with ${mainMenuOptions?.length || 0} menu options`);
+    
+    // Step 2: Generate startup nodes with customized main menu and company context
+    onProgress?.({ step: 'startup', status: 'started' });
+    const startupRows = generateStartupNodes({
+      targetCompany: projectConfig?.targetCompany || projectConfig?.projectName,
+      mainMenuOptions: mainMenuOptions,
+      projectDescription: projectConfig?.description,
+      companyContext: projectConfig?.companyContext,
+      botPersona: projectConfig?.botPersona
+    });
+    onProgress?.({ step: 'startup', status: 'done', rows: startupRows.length });
+    console.log(`[Sequential] Step 2: Generated ${startupRows.length} startup nodes`);
+    
+    // Step 3: Generate flows in PARALLEL for speed (with concurrency limit)
+    const flowRowsArrays: string[][] = [];
+    const generatedNodeNums: number[] = [1, 10, 100, 101, 102, 103, 104, 105, 666, 999, 99990];
+    const failedFlows: { name: string; error: string }[] = [];
+    
+    // Generate flows in parallel with max 3 concurrent
+    const PARALLEL_LIMIT = 3;
+    const flowResults: { index: number; rows: string[]; success: boolean; error?: string }[] = [];
+    
+    // Helper to generate a single flow with retry
+    const generateSingleFlow = async (flow: FlowPlan, index: number): Promise<{ index: number; rows: string[]; success: boolean; error?: string }> => {
+      const isWelcome = flow.name === 'welcome' || flow.name === 'greeting';
+      const MAX_FLOW_RETRIES = 3;
+      
+      // Check if we have a preview for this flow that the user has seen/approved
+      const preview = flowPreviews?.[flow.name];
+      if (preview) {
+        console.log(`[Parallel] Flow "${flow.name}" has preview with ${preview.length} nodes - will ensure consistency`);
+      }
+      
+      onProgress?.({ 
+        step: 'flow', 
+        status: 'started', 
+        flowName: flow.name,
+        currentFlow: index + 1,
+        totalFlows: flows.length
+      });
+      
+      for (let attempt = 1; attempt <= MAX_FLOW_RETRIES; attempt++) {
+        if (attempt > 1) {
+          console.log(`[Parallel] Retrying flow "${flow.name}" (attempt ${attempt}/${MAX_FLOW_RETRIES})...`);
+          await new Promise(r => setTimeout(r, 500 * attempt)); // Shorter delay
+        }
+        
+        try {
+          const flowResponse = await fetch('/api/generate-flow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              flow,
+              projectConfig,
+              contextNodes: generatedNodeNums,
+              isWelcome,
+              // Pass the preview so the AI generates CSV that matches what the user saw
+              conversationPreview: preview
+            })
+          });
+          
+          if (!flowResponse.ok) {
+            const errorText = await flowResponse.text();
+            console.error(`[Parallel] Flow "${flow.name}" attempt ${attempt} failed:`, errorText);
+            continue;
+          }
+          
+          const { nodes } = await flowResponse.json() as { nodes: any[] };
+          
+          if (!nodes || nodes.length === 0) {
+            console.error(`[Parallel] Flow "${flow.name}" attempt ${attempt}: Empty response`);
+            continue;
+          }
+          
+          const flowRows = nodesToCSVRows(nodes);
+          
+          onProgress?.({ 
+            step: 'flow', 
+            status: 'done', 
+            flowName: flow.name,
+            rows: flowRows.length,
+            currentFlow: index + 1,
+            totalFlows: flows.length
+          });
+          console.log(`[Parallel] Generated ${flowRows.length} nodes for "${flow.name}"`);
+          
+          return { index, rows: flowRows, success: true };
+          
+        } catch (fetchError: any) {
+          console.error(`[Parallel] Flow "${flow.name}" attempt ${attempt} exception:`, fetchError.message);
+        }
+      }
+      
+      // All retries failed
+      onProgress?.({ step: 'flow', status: 'error', flowName: flow.name, message: `Failed after ${MAX_FLOW_RETRIES} attempts` });
+      return { index, rows: [], success: false, error: `Failed after ${MAX_FLOW_RETRIES} attempts` };
+    };
+    
+    // Process flows in parallel batches
+    console.log(`[Sequential] Generating ${flows.length} flows in parallel (max ${PARALLEL_LIMIT} concurrent)...`);
+    const startParallel = performance.now();
+    
+    for (let batchStart = 0; batchStart < flows.length; batchStart += PARALLEL_LIMIT) {
+      const batch = flows.slice(batchStart, batchStart + PARALLEL_LIMIT);
+      const batchPromises = batch.map((flow, batchIndex) => 
+        generateSingleFlow(flow, batchStart + batchIndex)
+      );
+      const batchResults = await Promise.all(batchPromises);
+      flowResults.push(...batchResults);
+    }
+    
+    const parallelTime = Math.round(performance.now() - startParallel);
+    console.log(`[Sequential] Parallel generation complete in ${parallelTime}ms`);
+    
+    // Sort results by index and collect
+    flowResults.sort((a, b) => a.index - b.index);
+    for (const result of flowResults) {
+      if (result.success) {
+        flowRowsArrays.push(result.rows);
+      } else {
+        failedFlows.push({ name: flows[result.index].name, error: result.error || 'Unknown error' });
+      }
+    }
+    
+    // CRITICAL: Check if any flows failed - DO NOT deploy incomplete bots
+    if (failedFlows.length > 0) {
+      const failedNames = failedFlows.map(f => f.name).join(', ');
+      const errorMsg = `BLOCKING DEPLOYMENT: ${failedFlows.length} flow(s) failed to generate: ${failedNames}. ` +
+        `Failed flows: ${JSON.stringify(failedFlows)}`;
+      console.error(`[Sequential] ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    // Step 4: Assemble and validate
+    onProgress?.({ step: 'assembly', status: 'started' });
+    const csv = assembleAndValidateCSV(startupRows, flowRowsArrays);
+    onProgress?.({ step: 'assembly', status: 'done' });
+    
+    // Step 5: Validation
+    onProgress?.({ step: 'validation', status: 'started' });
+    const stats = parseCSVStats(csv);
+    onProgress?.({ step: 'validation', status: 'done' });
+    
+    const totalTime = Math.round(performance.now() - startTime);
+    console.log(`[Sequential] Complete in ${totalTime}ms: ${stats.totalNodes} nodes`);
+    
+    return {
+      csv,
+      nodeCount: stats.totalNodes,
+      officialNodesUsed: stats.officialNodesUsed,
+      customScripts: [],
+      warnings: [],
+      readme: `Bot generated using sequential generation in ${totalTime}ms`
+    };
+    
+  } catch (error: any) {
+    console.error('[Sequential] Generation failed:', error);
+    throw error;
+  }
 }

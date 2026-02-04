@@ -16,11 +16,16 @@ import {
   X,
   Loader2,
   RefreshCw,
-  Palette
+  Palette,
+  Link2,
+  Wand2,
+  Sparkles
 } from 'lucide-react';
 import { useState } from 'react';
 import { submitHumanFix } from '../services/error-learning';
 import { createChannelWithWidget, oneClickDeploy } from '../services/botmanager';
+import { exportToGoogleSheets } from '../services/composio';
+import { validateCSV, refineCSV, sanitizeCSVForDeploy } from '../services/generation';
 
 /**
  * ResultsPage - Shows the completed instant build results
@@ -44,7 +49,10 @@ export function ResultsPage() {
     setCredentials,
     credentials,
     activeSolutionId,
-    updateSavedSolution
+    updateSavedSolution,
+    integrations,
+    connectIntegration,
+    user
   } = useStore();
   
   const [copiedWidget, setCopiedWidget] = useState(false);
@@ -72,6 +80,35 @@ export function ResultsPage() {
   const [refreshingWidget, setRefreshingWidget] = useState(false);
   const [refreshWidgetError, setRefreshWidgetError] = useState<string | null>(null);
   const [refreshWidgetSuccess, setRefreshWidgetSuccess] = useState(false);
+  
+  // Google Sheets export state
+  const [exportingToSheets, setExportingToSheets] = useState(false);
+  const [sheetsExportError, setSheetsExportError] = useState<string | null>(null);
+  
+  // AI Review state
+  const [aiReviewing, setAiReviewing] = useState(false);
+  const [aiReviewPhase, setAiReviewPhase] = useState<'analyzing' | 'applying' | null>(null);
+  const [aiReviewResult, setAiReviewResult] = useState<{
+    success: boolean;
+    analysis?: {
+      overallScore?: number;
+      summary?: string;
+      criticalFlaws?: string[];
+      journeys?: Array<{ name: string; nodes: number[]; experience: string; issues: string[] }>;
+      issues?: Array<{ severity: string; nodeNum: number; issue: string; suggestion: string; category: string }>;
+      improvements?: Array<{ nodeNum: number; field: string; currentValue: string; suggestedValue: string; reason: string }>;
+      rewrittenMessages?: Record<string, string>;
+      rewrittenButtons?: Record<string, unknown>;
+      missingElements?: string[];
+    };
+    appliedCount?: number;
+    error?: string;
+  } | null>(null);
+  const [showReviewDetails, setShowReviewDetails] = useState(false);
+  
+  // Check if Google Sheets is connected
+  const googleSheetsIntegration = integrations.find((i) => i.id === 'google-sheets');
+  const isSheetsConnected = googleSheetsIntegration?.connected ?? false;
   
   const handleCopyContext = async () => {
     if (instantBuildResult?.humanInterventionContext) {
@@ -151,9 +188,86 @@ export function ResultsPage() {
     }
   };
   
-  const handleViewSheets = () => {
+  const handleViewSheets = async () => {
+    // Case 1: Already have a sheetsUrl - just open it
     if (instantBuildResult?.sheetsUrl) {
       window.open(instantBuildResult.sheetsUrl, '_blank');
+      return;
+    }
+    
+    // Case 2: Not connected to Google Sheets - initiate OAuth flow
+    if (!isSheetsConnected) {
+      setExportingToSheets(true);
+      setSheetsExportError(null);
+      
+      try {
+        const connected = await connectIntegration('google-sheets');
+        
+        if (!connected) {
+          setSheetsExportError('Failed to connect to Google Sheets');
+          setExportingToSheets(false);
+          return;
+        }
+        
+        // After connecting, export the CSV
+        await exportCSVToSheets();
+      } catch (e: any) {
+        console.error('Sheets connection error:', e);
+        setSheetsExportError(e.message || 'Failed to connect');
+        setExportingToSheets(false);
+      }
+      return;
+    }
+    
+    // Case 3: Connected but no sheetsUrl yet - export now
+    await exportCSVToSheets();
+  };
+  
+  const exportCSVToSheets = async () => {
+    if (!instantBuildResult?.csv) {
+      setSheetsExportError('No CSV content available to export');
+      setExportingToSheets(false);
+      return;
+    }
+    
+    setExportingToSheets(true);
+    setSheetsExportError(null);
+    
+    try {
+      const userId = user.email || `user_${Date.now()}`;
+      const fileName = `${extractedDetails?.clientName || 'Solution'}_${extractedDetails?.projectName || 'Export'}`;
+      
+      const result = await exportToGoogleSheets(
+        instantBuildResult.csv,
+        fileName,
+        userId
+      );
+      
+      if (result.success && result.spreadsheetUrl) {
+        // Update the result with the new sheetsUrl
+        setInstantBuildResult({
+          ...instantBuildResult,
+          sheetsUrl: result.spreadsheetUrl,
+          spreadsheetId: result.spreadsheetId,
+        });
+        
+        // Also update in Supabase if we have an active solution
+        if (activeSolutionId) {
+          updateSavedSolution(activeSolutionId, {
+            spreadsheetUrl: result.spreadsheetUrl,
+          });
+        }
+        
+        // Open the new spreadsheet
+        window.open(result.spreadsheetUrl, '_blank');
+      } else {
+        setSheetsExportError(result.error || 'Failed to export to Google Sheets');
+      }
+    } catch (e: any) {
+      console.error('Sheets export error:', e);
+      setSheetsExportError(e.message || 'Export failed');
+    } finally {
+      setExportingToSheets(false);
     }
   };
   
@@ -364,6 +478,132 @@ export function ResultsPage() {
     }
   };
   
+  // AI UX Review - Intelligent flow analysis
+  const handleAiReview = async () => {
+    if (!instantBuildResult?.csv) {
+      setAiReviewResult({ success: false, error: 'No CSV content available' });
+      return;
+    }
+    
+    setAiReviewing(true);
+    setAiReviewResult(null);
+    setAiReviewPhase('analyzing');
+    
+    try {
+      // Step 1: Call UX Review API for intelligent analysis
+      const reviewResponse = await fetch('/api/ux-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csv: instantBuildResult.csv,
+          projectConfig: {
+            clientName: extractedDetails?.clientName,
+            projectName: extractedDetails?.projectName,
+            projectType: extractedDetails?.projectType,
+            targetCompany: extractedDetails?.targetCompany,
+          },
+        }),
+      });
+      
+      if (!reviewResponse.ok) {
+        const error = await reviewResponse.json().catch(() => ({ error: 'Review failed' }));
+        throw new Error(error.error || 'UX review failed');
+      }
+      
+      const reviewData = await reviewResponse.json();
+      
+      if (!reviewData.success || !reviewData.analysis) {
+        throw new Error(reviewData.error || 'Analysis returned no data');
+      }
+      
+      const analysis = reviewData.analysis;
+      
+      // Step 2: If there are improvements, apply them
+      const hasImprovements = (analysis.improvements && analysis.improvements.length > 0) ||
+        (analysis.rewrittenMessages && Object.keys(analysis.rewrittenMessages).length > 0) ||
+        (analysis.rewrittenButtons && Object.keys(analysis.rewrittenButtons).length > 0);
+        
+      if (hasImprovements) {
+        setAiReviewPhase('applying');
+        
+        const applyResponse = await fetch('/api/ux-apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            csv: instantBuildResult.csv,
+            improvements: analysis.improvements || [],
+            rewrittenMessages: analysis.rewrittenMessages || {},
+            rewrittenButtons: analysis.rewrittenButtons || {},
+            projectConfig: {
+              clientName: extractedDetails?.clientName,
+              projectName: extractedDetails?.projectName,
+            },
+          }),
+        });
+        
+        if (applyResponse.ok) {
+          const applyData = await applyResponse.json();
+          
+          if (applyData.success && applyData.csv) {
+            // Sanitize the improved CSV
+            const improvedCSV = sanitizeCSVForDeploy(applyData.csv);
+            
+            // Update the solution with improved CSV
+            setInstantBuildResult({
+              ...instantBuildResult,
+              csv: improvedCSV,
+            });
+            
+            // Save to Supabase
+            if (activeSolutionId) {
+              updateSavedSolution(activeSolutionId, {
+                csvContent: improvedCSV,
+              });
+            }
+            
+            setAiReviewResult({
+              success: true,
+              analysis,
+              appliedCount: applyData.appliedCount || analysis.improvements.length,
+            });
+          } else {
+            // Improvements couldn't be applied, but analysis is still valid
+            setAiReviewResult({
+              success: true,
+              analysis,
+              error: 'Could not auto-apply improvements',
+            });
+          }
+        } else {
+          // API call failed, but we still have the analysis
+          setAiReviewResult({
+            success: true,
+            analysis,
+            error: 'Could not auto-apply improvements',
+          });
+        }
+      } else {
+        // No improvements needed - flow is good!
+        setAiReviewResult({
+          success: true,
+          analysis,
+        });
+      }
+      
+      setShowReviewDetails(true);
+      
+    } catch (e: any) {
+      console.error('AI UX Review failed:', e);
+      setAiReviewResult({
+        success: false,
+        error: e.message || 'AI review failed',
+      });
+    } finally {
+      setAiReviewing(false);
+      setAiReviewPhase(null);
+    }
+  };
+  
   if (!instantBuildResult || !instantBuildResult.success) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -415,20 +655,54 @@ export function ResultsPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         {/* View in Google Sheets */}
         <div
-          onClick={instantBuildResult.sheetsUrl ? handleViewSheets : undefined}
+          onClick={exportingToSheets ? undefined : handleViewSheets}
           role="button"
-          tabIndex={instantBuildResult.sheetsUrl ? 0 : -1}
-          onKeyDown={(e) => e.key === 'Enter' && instantBuildResult.sheetsUrl && handleViewSheets()}
-          className={`group relative bg-[#1a1a1f] border border-white/10 rounded-xl p-6 text-left hover:border-[#6366f1]/50 transition-all ${
-            !instantBuildResult.sheetsUrl ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+          tabIndex={exportingToSheets ? -1 : 0}
+          onKeyDown={(e) => e.key === 'Enter' && !exportingToSheets && handleViewSheets()}
+          className={`group relative bg-[#1a1a1f] border rounded-xl p-6 text-left transition-all cursor-pointer ${
+            exportingToSheets 
+              ? 'border-[#22c55e]/30 cursor-wait' 
+              : sheetsExportError
+              ? 'border-red-500/30'
+              : instantBuildResult.sheetsUrl 
+              ? 'border-white/10 hover:border-[#22c55e]/50' 
+              : !isSheetsConnected
+              ? 'border-amber-500/30 hover:border-amber-500/50'
+              : 'border-white/10 hover:border-[#22c55e]/50'
           }`}
         >
-          <div className="w-12 h-12 rounded-xl bg-[#22c55e]/10 flex items-center justify-center mb-4">
-            <FileSpreadsheet className="w-6 h-6 text-[#22c55e]" />
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${
+            !isSheetsConnected && !instantBuildResult.sheetsUrl
+              ? 'bg-amber-500/10'
+              : 'bg-[#22c55e]/10'
+          }`}>
+            {exportingToSheets ? (
+              <Loader2 className="w-6 h-6 text-[#22c55e] animate-spin" />
+            ) : !isSheetsConnected && !instantBuildResult.sheetsUrl ? (
+              <Link2 className="w-6 h-6 text-amber-400" />
+            ) : (
+              <FileSpreadsheet className="w-6 h-6 text-[#22c55e]" />
+            )}
           </div>
-          <h3 className="text-white font-medium mb-1">View in Google Sheets</h3>
+          <h3 className="text-white font-medium mb-1">
+            {exportingToSheets 
+              ? 'Exporting...' 
+              : instantBuildResult.sheetsUrl 
+              ? 'View in Google Sheets'
+              : !isSheetsConnected
+              ? 'Connect Google Sheets'
+              : 'Export to Sheets'}
+          </h3>
           <p className="text-xs text-[#6a6a75]">
-            {instantBuildResult.sheetsUrl ? 'Open spreadsheet' : 'Not exported'}
+            {exportingToSheets
+              ? 'Creating spreadsheet...'
+              : sheetsExportError
+              ? sheetsExportError
+              : instantBuildResult.sheetsUrl 
+              ? 'Open spreadsheet' 
+              : !isSheetsConnected
+              ? 'Sign in to export'
+              : 'Export CSV now'}
           </p>
           <ExternalLink className="absolute top-4 right-4 w-4 h-4 text-[#4a4a55] group-hover:text-[#6a6a75] transition-colors" />
           
@@ -512,7 +786,294 @@ export function ResultsPage() {
             Visual editor with sync
           </p>
         </div>
+        
+        {/* AI UX Review */}
+        <div
+          onClick={aiReviewing ? undefined : handleAiReview}
+          role="button"
+          tabIndex={aiReviewing ? -1 : 0}
+          onKeyDown={(e) => e.key === 'Enter' && !aiReviewing && handleAiReview()}
+          className={`group relative bg-[#1a1a1f] border rounded-xl p-6 text-left transition-all ${
+            aiReviewing 
+              ? 'border-[#f59e0b]/30 cursor-wait' 
+              : aiReviewResult?.success === true
+              ? 'border-[#22c55e]/30 hover:border-[#22c55e]/50 cursor-pointer'
+              : aiReviewResult?.success === false
+              ? 'border-red-500/30 hover:border-red-500/50 cursor-pointer'
+              : 'border-white/10 hover:border-[#f59e0b]/50 cursor-pointer'
+          }`}
+        >
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 ${
+            aiReviewResult?.success === true
+              ? 'bg-[#22c55e]/10'
+              : aiReviewResult?.success === false
+              ? 'bg-red-500/10'
+              : 'bg-[#f59e0b]/10'
+          }`}>
+            {aiReviewing ? (
+              <Loader2 className="w-6 h-6 text-[#f59e0b] animate-spin" />
+            ) : aiReviewResult?.success === true ? (
+              <Check className="w-6 h-6 text-[#22c55e]" />
+            ) : aiReviewResult?.success === false ? (
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            ) : (
+              <Sparkles className="w-6 h-6 text-[#f59e0b]" />
+            )}
+          </div>
+          <h3 className="text-white font-medium mb-1">
+            {aiReviewing 
+              ? aiReviewPhase === 'applying' ? 'Applying fixes...' : 'Analyzing UX...'
+              : aiReviewResult?.success === true
+              ? 'UX Review Complete'
+              : aiReviewResult?.success === false
+              ? 'Review Failed'
+              : 'AI UX Review'}
+          </h3>
+          <p className="text-xs text-[#6a6a75]">
+            {aiReviewing
+              ? aiReviewPhase === 'applying' ? 'Optimizing flow...' : 'Tracing user journeys...'
+              : aiReviewResult?.success === true
+              ? `Score: ${aiReviewResult.analysis?.overallScore || '?'}/10`
+              : aiReviewResult?.success === false
+              ? aiReviewResult.error || 'Click to retry'
+              : 'Analyze & optimize flows'}
+          </p>
+          
+          {/* Show score badge */}
+          {aiReviewResult?.analysis?.overallScore && (
+            <div className={`absolute top-4 right-4 px-2 py-0.5 text-xs rounded-full ${
+              aiReviewResult.analysis.overallScore >= 8
+                ? 'bg-[#22c55e]/20 text-[#22c55e]'
+                : aiReviewResult.analysis.overallScore >= 5
+                ? 'bg-amber-500/20 text-amber-400'
+                : 'bg-red-500/20 text-red-400'
+            }`}>
+              {aiReviewResult.analysis.overallScore}/10
+            </div>
+          )}
+          
+          {/* Show improvements applied badge */}
+          {aiReviewResult?.appliedCount && aiReviewResult.appliedCount > 0 && (
+            <div className="absolute bottom-4 right-4 px-2 py-0.5 bg-[#22c55e]/20 text-[#22c55e] text-xs rounded-full">
+              {aiReviewResult.appliedCount} improved
+            </div>
+          )}
+        </div>
+        
+        {/* Live Edit */}
+        <div
+          onClick={() => {
+            window.history.pushState({}, '', '/live-edit');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              window.history.pushState({}, '', '/live-edit');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            }
+          }}
+          className="group relative bg-[#1a1a1f] border border-white/10 rounded-xl p-6 text-left hover:border-[#10b981]/50 transition-all cursor-pointer"
+        >
+          <div className="w-12 h-12 rounded-xl bg-[#10b981]/10 flex items-center justify-center mb-4">
+            <Wand2 className="w-6 h-6 text-[#10b981]" />
+          </div>
+          <h3 className="text-white font-medium mb-1">Live Edit</h3>
+          <p className="text-xs text-[#6a6a75]">
+            Chat-based editing
+          </p>
+        </div>
       </div>
+      
+      {/* AI UX Review Details Panel */}
+      {showReviewDetails && aiReviewResult?.analysis && (
+        <div className="bg-[#1a1a1f] border border-white/10 rounded-xl p-6 mb-8 animate-fade-in">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                (aiReviewResult.analysis.overallScore || 0) >= 8
+                  ? 'bg-[#22c55e]/10'
+                  : (aiReviewResult.analysis.overallScore || 0) >= 5
+                  ? 'bg-amber-500/10'
+                  : 'bg-red-500/10'
+              }`}>
+                <Sparkles className={`w-5 h-5 ${
+                  (aiReviewResult.analysis.overallScore || 0) >= 8
+                    ? 'text-[#22c55e]'
+                    : (aiReviewResult.analysis.overallScore || 0) >= 5
+                    ? 'text-amber-400'
+                    : 'text-red-400'
+                }`} />
+              </div>
+              <div>
+                <h3 className="text-white font-medium">UX Analysis Results</h3>
+                <p className="text-xs text-[#6a6a75]">
+                  Score: {aiReviewResult.analysis.overallScore}/10
+                  {aiReviewResult.appliedCount ? ` • ${aiReviewResult.appliedCount} improvements applied` : ''}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowReviewDetails(false)}
+              className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+            >
+              <X className="w-4 h-4 text-[#6a6a75]" />
+            </button>
+          </div>
+          
+          {/* Summary */}
+          {aiReviewResult.analysis.summary && (
+            <div className="mb-4 p-3 bg-[#0a0a0f] rounded-lg">
+              <p className="text-sm text-[#a3a3bd]">{aiReviewResult.analysis.summary}</p>
+            </div>
+          )}
+          
+          {/* Critical Flaws - Most Important */}
+          {aiReviewResult.analysis.criticalFlaws && aiReviewResult.analysis.criticalFlaws.length > 0 && (
+            <div className="mb-4 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <h4 className="text-sm font-medium text-red-400 mb-2 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                Critical Issues Found
+              </h4>
+              <ul className="space-y-2">
+                {aiReviewResult.analysis.criticalFlaws.map((flaw, idx) => (
+                  <li key={idx} className="text-sm text-red-300 flex items-start gap-2">
+                    <span className="text-red-500 mt-1">•</span>
+                    <span>{flaw}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          
+          {/* Rewritten Messages Preview */}
+          {aiReviewResult.analysis.rewrittenMessages && Object.keys(aiReviewResult.analysis.rewrittenMessages).length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-medium text-[#8585a3] uppercase tracking-wider mb-2">
+                Message Rewrites ({Object.keys(aiReviewResult.analysis.rewrittenMessages).length})
+              </h4>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {Object.entries(aiReviewResult.analysis.rewrittenMessages).slice(0, 5).map(([nodeNum, newMessage]) => (
+                  <div key={nodeNum} className="p-3 bg-[#22c55e]/5 border border-[#22c55e]/20 rounded-lg">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs text-[#22c55e] font-medium">Node {nodeNum}</span>
+                      <span className="text-xs text-[#22c55e]">→ Rewritten</span>
+                    </div>
+                    <p className="text-sm text-[#a3a3bd]">"{newMessage}"</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* User Journeys */}
+          {aiReviewResult.analysis.journeys && aiReviewResult.analysis.journeys.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-medium text-[#8585a3] uppercase tracking-wider mb-2">User Journeys</h4>
+              <div className="space-y-2">
+                {aiReviewResult.analysis.journeys.slice(0, 3).map((journey, idx) => (
+                  <div key={idx} className="p-3 bg-[#0a0a0f] rounded-lg">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-sm font-medium text-white">{journey.name}</span>
+                      <span className="text-xs text-[#6a6a75]">
+                        ({journey.nodes?.length || 0} nodes)
+                      </span>
+                    </div>
+                    <p className="text-xs text-[#8585a3] mb-2">{journey.experience}</p>
+                    {journey.issues && journey.issues.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {journey.issues.map((issue, i) => (
+                          <span key={i} className="text-xs px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded">
+                            {issue}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Issues Found */}
+          {aiReviewResult.analysis.issues && aiReviewResult.analysis.issues.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-medium text-[#8585a3] uppercase tracking-wider mb-2">
+                Issues Found ({aiReviewResult.analysis.issues.length})
+              </h4>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {aiReviewResult.analysis.issues.map((issue, idx) => (
+                  <div key={idx} className={`p-3 rounded-lg border ${
+                    issue.severity === 'critical'
+                      ? 'bg-red-500/5 border-red-500/20'
+                      : issue.severity === 'major'
+                      ? 'bg-amber-500/5 border-amber-500/20'
+                      : 'bg-[#0a0a0f] border-white/5'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        issue.severity === 'critical'
+                          ? 'bg-red-500/20 text-red-400'
+                          : issue.severity === 'major'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-[#6366f1]/20 text-[#a5b4fc]'
+                      }`}>
+                        {issue.severity}
+                      </span>
+                      <span className="text-xs text-[#6a6a75]">Node {issue.nodeNum}</span>
+                      <span className="text-xs text-[#4a4a55]">•</span>
+                      <span className="text-xs text-[#6a6a75]">{issue.category}</span>
+                    </div>
+                    <p className="text-sm text-white mb-1">{issue.issue}</p>
+                    <p className="text-xs text-[#22c55e]">Suggestion: {issue.suggestion}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Missing Elements */}
+          {aiReviewResult.analysis.missingElements && aiReviewResult.analysis.missingElements.length > 0 && (
+            <div className="mb-4">
+              <h4 className="text-xs font-medium text-[#8585a3] uppercase tracking-wider mb-2">
+                Recommended Additions
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {aiReviewResult.analysis.missingElements.map((element, idx) => (
+                  <span key={idx} className="text-xs px-2 py-1 bg-[#6366f1]/10 text-[#a5b4fc] rounded-lg">
+                    {element}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Applied Improvements */}
+          {aiReviewResult.appliedCount && aiReviewResult.appliedCount > 0 && (
+            <div className="p-3 bg-[#22c55e]/10 border border-[#22c55e]/20 rounded-lg">
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-[#22c55e]" />
+                <span className="text-sm text-[#22c55e] font-medium">
+                  {aiReviewResult.appliedCount} improvements automatically applied to your flow
+                </span>
+              </div>
+            </div>
+          )}
+          
+          {/* Run Again Button */}
+          <div className="mt-4 pt-4 border-t border-white/5">
+            <button
+              onClick={handleAiReview}
+              disabled={aiReviewing}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-[#a5b4fc] hover:text-white border border-[#6366f1]/30 hover:border-[#6366f1]/50 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Run Review Again
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Bot ID Info */}
       <div className="bg-[#1a1a1f]/50 border border-white/5 rounded-lg p-4 mb-8">

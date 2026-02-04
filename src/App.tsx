@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from './store/useStore';
 import { Layout } from './components/Layout';
 import { useAuth } from './contexts/AuthContext';
@@ -14,42 +15,109 @@ import {
   DeployPage,
   LoginPage,
   ConfirmDetailsPage,
+  SolutionArchitecturePage,
   ProcessingPage,
   ResultsPage,
   EditorPage,
+  LiveEditPage,
 } from './pages';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { Loader2 } from 'lucide-react';
 import type { WizardStep, InstantStep } from './types';
 
-// Map URL paths to wizard steps
-const pathToStep: Record<string, WizardStep> = {
-  '/': 'welcome',
-  '/welcome': 'welcome',
-  '/dashboard': 'dashboard',
-  '/solution': 'solution-detail',
-  '/project-setup': 'project-setup',
-  '/requirements': 'requirements',
-  '/clarifying-questions': 'clarifying-questions',
-  '/generation': 'generation',
-  '/review': 'review',
-  '/deploy': 'deploy',
-};
+// Protected route wrapper - requires authentication
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isLoading: authLoading, isAuthenticated } = useAuth();
+  
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 text-[#6366f1] animate-spin mx-auto mb-4" />
+          <p className="text-[#8585a3] text-sm">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+  
+  return <>{children}</>;
+}
 
-// Map wizard steps to URL paths
-const stepToPath: Record<WizardStep, string> = {
-  'welcome': '/',
-  'dashboard': '/dashboard',
-  'solution-detail': '/solution',
-  'project-setup': '/project-setup',
-  'requirements': '/requirements',
-  'clarifying-questions': '/clarifying-questions',
-  'generation': '/generation',
-  'review': '/review',
-  'deploy': '/deploy',
-};
+// Solution route wrapper - sets active solution from URL and syncs view state
+function SolutionRoute() {
+  const { solutionId, view, flowName } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { 
+    setActiveSolution, 
+    activeSolutionId,
+    savedSolutions,
+    setInstantStep,
+    instantStep,
+    fetchSavedSolutions,
+    solutionsLoaded
+  } = useStore();
+  
+  // Sync solution ID from URL to store
+  useEffect(() => {
+    if (solutionId && solutionId !== activeSolutionId) {
+      setActiveSolution(solutionId);
+      console.log('[Router] Set active solution from URL:', solutionId);
+    }
+  }, [solutionId, activeSolutionId, setActiveSolution]);
+  
+  // Ensure solutions are loaded
+  useEffect(() => {
+    if (!solutionsLoaded) {
+      fetchSavedSolutions();
+    }
+  }, [solutionsLoaded, fetchSavedSolutions]);
+  
+  // Set instant step based on view
+  useEffect(() => {
+    if (view === 'confirm' && instantStep !== 'confirm') {
+      setInstantStep('confirm');
+    } else if (view === 'results' && instantStep !== 'results') {
+      setInstantStep('results');
+    } else if (view === 'editor' && instantStep !== 'editor') {
+      setInstantStep('editor');
+    } else if (!view || view === 'architecture') {
+      // Default to architecture view for /solutions/:id
+      if (instantStep !== 'architecture') {
+        setInstantStep('architecture');
+      }
+    }
+  }, [view, instantStep, setInstantStep]);
+  
+  // Pass flow name to architecture page via window for now
+  // TODO: Use React context for cleaner state passing
+  useEffect(() => {
+    if (flowName) {
+      (window as any).__selectedFlowFromURL = flowName;
+    } else {
+      delete (window as any).__selectedFlowFromURL;
+    }
+  }, [flowName]);
+  
+  // Render the appropriate view
+  if (view === 'confirm') {
+    return <ConfirmDetailsPage />;
+  } else if (view === 'results') {
+    return <ResultsPage />;
+  } else if (view === 'editor') {
+    return <EditorPage />;
+  } else {
+    // Default: architecture view (with optional flow drill-down)
+    return <SolutionArchitecturePage />;
+  }
+}
 
-function App() {
+// Main app content with routing
+function AppContent() {
   const { 
     currentStep, 
     error, 
@@ -62,14 +130,12 @@ function App() {
     savedSolutions,
     fetchSavedSolutions,
     solutionsLoaded,
-    instantStep
+    instantStep,
+    setInstantStep
   } = useStore();
   const { isLoading: authLoading, isAuthenticated, user } = useAuth();
-  
-  // Handle OAuth callback route
-  if (window.location.pathname === '/auth/callback') {
-    return <AuthCallbackPage />;
-  }
+  const location = useLocation();
+  const navigate = useNavigate();
 
   // Sync auth user to store when auth state changes
   useEffect(() => {
@@ -87,114 +153,107 @@ function App() {
   
   // Restore solution from saved solutions if needed (after reload)
   useEffect(() => {
-    // If we have an active solution ID but no solution data, try to restore from saved
     if (activeSolutionId && !solution && savedSolutions.length > 0) {
       restoreSolutionFromSaved();
     }
   }, [activeSolutionId, solution, savedSolutions, restoreSolutionFromSaved]);
 
-  // Sync URL → State on initial load and browser navigation
+  // Sync instantStep changes to URL for solution pages
+  // IMPORTANT: Only redirect if we're NOT on the home page creating a new project
+  // If we're on '/' or '/welcome', the user is in the new project flow - don't redirect to old solutions
   useEffect(() => {
-    const handleNavigation = () => {
-      const path = window.location.pathname;
-      const step = pathToStep[path];
-      if (step && step !== currentStep) {
-        setStep(step);
+    if (activeSolutionId && instantStep !== 'create') {
+      const currentPath = location.pathname;
+      
+      // Skip redirect if user is on the home page - they're creating a new project
+      // and we don't want to redirect them to an old solution from localStorage
+      if (currentPath === '/' || currentPath === '/welcome') {
+        return;
       }
-    };
-
-    // Set initial step from URL
-    handleNavigation();
-
-    // Listen for browser back/forward
-    window.addEventListener('popstate', handleNavigation);
-    return () => window.removeEventListener('popstate', handleNavigation);
-  }, []);
-
-  // Sync State → URL when step changes
-  useEffect(() => {
-    const targetPath = stepToPath[currentStep];
-    if (targetPath && window.location.pathname !== targetPath) {
-      window.history.pushState({}, '', targetPath);
-    }
-  }, [currentStep]);
-
-  // Show loading screen while checking auth
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="w-8 h-8 text-[#6366f1] animate-spin mx-auto mb-4" />
-          <p className="text-[#8585a3] text-sm">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Show login page if not authenticated
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
-
-  const renderPage = () => {
-    // Check instant flow steps first (takes precedence when active)
-    if (instantStep !== 'create') {
-      switch (instantStep) {
-        case 'confirm':
-          return <ConfirmDetailsPage />;
-        case 'processing':
-          return <ProcessingPage />;
-        case 'results':
-          return <ResultsPage />;
-        case 'editor':
-          return <EditorPage />;
+      
+      let targetPath = `/solutions/${activeSolutionId}`;
+      
+      if (instantStep === 'confirm') {
+        targetPath = `/solutions/${activeSolutionId}/confirm`;
+      } else if (instantStep === 'results') {
+        targetPath = `/solutions/${activeSolutionId}/results`;
+      } else if (instantStep === 'editor') {
+        targetPath = `/solutions/${activeSolutionId}/editor`;
+      }
+      // architecture is the default, so /solutions/:id is sufficient
+      
+      if (currentPath !== targetPath && !currentPath.startsWith('/solutions/')) {
+        navigate(targetPath, { replace: true });
       }
     }
-    
-    // Legacy wizard flow
-    switch (currentStep) {
-      case 'welcome':
-        return <WelcomePage />;
-      case 'dashboard':
-        return <DashboardPage />;
-      case 'solution-detail':
-        return <SolutionDetailPage />;
-      case 'project-setup':
-        return <ProjectSetupPage />;
-      case 'requirements':
-        return <RequirementsPage />;
-      case 'clarifying-questions':
-        return <ClarifyingQuestionsPage />;
-      case 'generation':
-        return <GenerationPage />;
-      case 'review':
-        return <ReviewPage />;
-      case 'deploy':
-        return <DeployPage />;
-      default:
-        return <WelcomePage />;
-    }
-  };
+  }, [instantStep, activeSolutionId, navigate, location.pathname]);
 
   return (
-    <Layout>
-      {/* Global Error Banner */}
-      {error && (
-        <div className="mb-4 p-3.5 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] rounded-xl flex items-center justify-between">
-          <span className="text-[13px] text-[#f87171]">{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="text-[12px] text-[#f87171] hover:text-[#fca5a5] font-medium"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+    <Routes>
+      {/* Auth callback - no layout */}
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
       
-      <div key={currentStep} className="page-transition">
-        {renderPage()}
-      </div>
-    </Layout>
+      {/* Live edit - no layout */}
+      <Route path="/live-edit/*" element={
+        <ProtectedRoute>
+          <LiveEditPage />
+        </ProtectedRoute>
+      } />
+      
+      {/* Main app routes with layout */}
+      <Route path="/*" element={
+        <ProtectedRoute>
+          <Layout>
+            {/* Global Error Banner */}
+            {error && (
+              <div className="mb-4 p-3.5 bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.2)] rounded-xl flex items-center justify-between">
+                <span className="text-[13px] text-[#f87171]">{error}</span>
+                <button
+                  onClick={() => setError(null)}
+                  className="text-[12px] text-[#f87171] hover:text-[#fca5a5] font-medium"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            
+            <Routes>
+              {/* Home / Welcome */}
+              <Route path="/" element={<WelcomePage />} />
+              <Route path="/welcome" element={<WelcomePage />} />
+              
+              {/* Dashboard */}
+              <Route path="/dashboard" element={<DashboardPage />} />
+              
+              {/* Solution routes with ID in URL */}
+              <Route path="/solutions/:solutionId" element={<SolutionRoute />} />
+              <Route path="/solutions/:solutionId/:view" element={<SolutionRoute />} />
+              <Route path="/solutions/:solutionId/flow/:flowName" element={<SolutionRoute />} />
+              
+              {/* Legacy routes for backward compatibility */}
+              <Route path="/solution" element={<SolutionDetailPage />} />
+              <Route path="/project-setup" element={<ProjectSetupPage />} />
+              <Route path="/requirements" element={<RequirementsPage />} />
+              <Route path="/clarifying-questions" element={<ClarifyingQuestionsPage />} />
+              <Route path="/generation" element={<GenerationPage />} />
+              <Route path="/review" element={<ReviewPage />} />
+              <Route path="/deploy" element={<DeployPage />} />
+              
+              {/* Catch all - redirect to home */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Layout>
+        </ProtectedRoute>
+      } />
+    </Routes>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   );
 }
 

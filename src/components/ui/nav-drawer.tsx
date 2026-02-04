@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { 
   X, Plus, ChevronRight, FileText, Clock, 
   CheckCircle2, Archive, Rocket, LayoutDashboard,
@@ -92,6 +93,7 @@ export function NavMenuButton() {
 
 // Main navigation drawer
 export function NavDrawer() {
+  const navigate = useNavigate()
   const sidebarOpen = useStore((state) => state.sidebarOpen)
   const setSidebarOpen = useStore((state) => state.setSidebarOpen)
   const savedSolutions = useStore((state) => state.savedSolutions)
@@ -141,17 +143,20 @@ export function NavDrawer() {
   }, [setSidebarOpen])
   
   const handleNewSolution = () => {
-    closeAndNavigate(() => startNewSolution())
+    closeAndNavigate(() => {
+      startNewSolution()
+      navigate('/')
+    })
   }
   
   const handleOpenDashboard = () => {
-    closeAndNavigate(() => setStep('dashboard'))
+    closeAndNavigate(() => navigate('/dashboard'))
   }
   
   const handleSelectSolution = (solutionId: string) => {
     closeAndNavigate(() => {
       setActiveSolution(solutionId)
-      setStep('dashboard')
+      navigate(`/solutions/${solutionId}`)
     })
   }
   

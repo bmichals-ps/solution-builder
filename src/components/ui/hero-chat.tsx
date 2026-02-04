@@ -655,6 +655,222 @@ function ImportButtons({ onImport }: { onImport?: (source: string) => void }) {
 }
 
 
+// BOT TYPE OPTIONS
+const BOT_TYPES = [
+  { id: 'claims', label: 'Claims & FNOL', description: 'First notice of loss, claim filing' },
+  { id: 'support', label: 'Customer Support', description: 'FAQ, troubleshooting, account help' },
+  { id: 'sales', label: 'Sales & Lead Gen', description: 'Qualification, scheduling, quotes' },
+  { id: 'onboarding', label: 'Onboarding', description: 'New customer setup, welcome flows' },
+  { id: 'billing', label: 'Billing & Payments', description: 'Payment processing, invoices' },
+  { id: 'appointments', label: 'Scheduling', description: 'Appointment booking, reminders' },
+  { id: 'feedback', label: 'Feedback & Surveys', description: 'NPS, CSAT, reviews' },
+  { id: 'custom', label: 'Custom', description: 'Build from scratch' },
+]
+
+// BOT TYPE DROPDOWN
+function BotTypeDropdown({ 
+  value, 
+  onChange 
+}: { 
+  value: string
+  onChange: (type: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [buttonRect, setButtonRect] = useState<DOMRect | null>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const selectedType = BOT_TYPES.find(t => t.id === value)
+  const displayLabel = value === 'custom' ? 'Select type...' : selectedType?.label || 'Select type...'
+  
+  const handleOpen = () => {
+    if (buttonRef.current) {
+      setButtonRect(buttonRef.current.getBoundingClientRect())
+    }
+    setIsOpen(!isOpen)
+  }
+  
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        onClick={handleOpen}
+        className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-white/[0.04] ring-1 ring-white/[0.06] hover:ring-white/[0.1] transition-all text-left"
+      >
+        <span className={`text-[15px] truncate ${value === 'custom' ? 'text-[#6a6a75]' : 'text-white'}`}>{displayLabel}</span>
+        <ChevronDown className={`w-4 h-4 text-[#6a6a75] shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      
+      {isOpen && buttonRect && createPortal(
+        <>
+          <div className="fixed inset-0 z-[200]" onClick={() => setIsOpen(false)} />
+          <div 
+            className="fixed z-[201] bg-[#1a1a1f] border border-white/10 rounded-xl shadow-2xl shadow-black/60 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 max-h-[320px] overflow-y-auto"
+            style={{
+              top: buttonRect.bottom + 8,
+              left: buttonRect.left,
+              width: buttonRect.width,
+            }}
+          >
+            <div className="p-1.5">
+              {BOT_TYPES.map((type) => (
+                <button
+                  key={type.id}
+                  onClick={() => {
+                    onChange(type.id)
+                    setIsOpen(false)
+                  }}
+                  className={`w-full flex flex-col gap-0.5 px-3 py-2.5 rounded-lg transition-all duration-150 text-left ${
+                    value === type.id 
+                      ? 'bg-[#6366f1]/20 text-white' 
+                      : 'text-[#a0a0a5] hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <span className="text-sm font-medium">{type.label}</span>
+                  <span className="text-xs text-[#5a5a65]">{type.description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </div>
+  )
+}
+
+// SOLUTION BUILDER FORM - matches original chat input style
+function SolutionBuilderForm({
+  companyUrl,
+  onCompanyUrlChange,
+  botType,
+  onBotTypeChange,
+  additionalInfo,
+  onAdditionalInfoChange,
+  brandInfo,
+  isProcessing,
+  onSubmit
+}: {
+  companyUrl: string
+  onCompanyUrlChange: (url: string) => void
+  botType: string
+  onBotTypeChange: (type: string) => void
+  additionalInfo: string
+  onAdditionalInfoChange: (info: string) => void
+  brandInfo: { name: string; logo: string; color: string } | null
+  isProcessing: boolean
+  onSubmit: () => void
+}) {
+  const [isFocused, setIsFocused] = useState(false)
+  
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && !isProcessing) {
+      e.preventDefault()
+      onSubmit()
+    }
+  }
+  
+  return (
+    <div className="relative w-full max-w-[680px] mx-auto">
+      {/* Gradient border effect - same as original */}
+      <div className="absolute -inset-[1px] rounded-2xl bg-gradient-to-b from-white/[0.12] to-transparent pointer-events-none" />
+      
+      {/* Main container - same style as original ChatInput */}
+      <div className="relative rounded-2xl bg-[#18181f] ring-1 ring-white/[0.08] shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_4px_32px_rgba(0,0,0,0.5)]">
+        
+        {/* Top row: Company URL + Bot Type */}
+        <div className="flex flex-col sm:flex-row gap-3 p-4 pb-3">
+          {/* Company URL input */}
+          <div className="flex-1 relative">
+            <div className="flex items-center gap-2 rounded-xl bg-white/[0.04] px-4 py-2.5 ring-1 ring-white/[0.06] hover:ring-white/[0.1] transition-all">
+              <span className="text-[#5a5a65] text-sm shrink-0">https://</span>
+              <input
+                type="text"
+                value={companyUrl}
+                onChange={(e) => onCompanyUrlChange(e.target.value)}
+                placeholder="company.com"
+                className="flex-1 bg-transparent text-[15px] text-white placeholder-[#4a4a55] focus:outline-none min-w-0"
+              />
+              {brandInfo && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <img 
+                    src={brandInfo.logo} 
+                    alt={brandInfo.name}
+                    className="w-5 h-5 rounded object-contain"
+                    onError={(e) => (e.currentTarget.style.display = 'none')}
+                  />
+                  <Check className="w-4 h-4 text-[#22c55e]" />
+                </div>
+              )}
+              {!brandInfo && companyUrl && companyUrl.includes('.') && (
+                <div className="w-4 h-4 border-2 border-[#6366f1]/30 border-t-[#6366f1] rounded-full animate-spin shrink-0" />
+              )}
+            </div>
+          </div>
+          
+          {/* Bot Type dropdown */}
+          <div className="sm:w-[200px]">
+            <BotTypeDropdown value={botType} onChange={onBotTypeChange} />
+          </div>
+        </div>
+        
+        {/* Brand indicator */}
+        {brandInfo && (
+          <div className="px-4 pb-2 flex items-center gap-2">
+            <div className="w-3 h-3 rounded" style={{ backgroundColor: brandInfo.color }} />
+            <span className="text-xs text-[#6a6a75]">
+              <span className="text-[#22c55e] font-medium">✓</span> {brandInfo.name} branding detected
+            </span>
+          </div>
+        )}
+        
+        {/* Additional details textarea */}
+        <div className="relative px-4">
+          <textarea
+            value={additionalInfo}
+            onChange={(e) => onAdditionalInfoChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            placeholder="Add any specific requirements, integrations, or features... (optional)"
+            disabled={isProcessing}
+            className="w-full resize-none bg-transparent text-[15px] text-white placeholder-[#4a4a55] py-3 focus:outline-none min-h-[80px] max-h-[150px] disabled:opacity-50"
+          />
+        </div>
+
+        {/* Bottom bar - same layout as original */}
+        <div className="flex items-center justify-between px-3 pb-3 pt-1">
+          <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[#5a5a65]">
+              <Zap className="w-3.5 h-3.5 text-[#6366f1]" />
+              <span>AI-powered</span>
+            </div>
+          </div>
+
+          <div className="flex-1" />
+
+          {/* Submit button - same style as original */}
+          <button
+            onClick={onSubmit}
+            disabled={!companyUrl.trim() || isProcessing}
+            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-[#6366f1] hover:bg-[#7c7ff2] text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 shadow-[0_0_24px_rgba(99,102,241,0.35)]"
+          >
+            {isProcessing ? (
+              <>
+                <span className="hidden sm:inline">Building...</span>
+                <div className="size-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              </>
+            ) : (
+              <>
+                <span className="hidden sm:inline">Build Solution</span>
+                <SendHorizontal className="size-4" />
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // MAIN HERO CHAT COMPONENT
 interface HeroChatProps {
   title?: string
@@ -662,20 +878,43 @@ interface HeroChatProps {
   subtitle?: string
   announcementText?: string
   isProcessing?: boolean
-  onSend?: (message: string) => void
+  onSend?: (message: string, companyUrl?: string, botType?: string) => void
   onImport?: (source: string) => void
+  onCompanyUrlChange?: (url: string) => void
+  companyUrl?: string
+  brandInfo?: { name: string; logo: string; color: string } | null
 }
 
 export function HeroChat({
   title = "What will you",
-  highlightedWord = "design",
-  subtitle = "Describe your bot in plain language. AI will extract the details.",
+  highlightedWord = "build",
+  subtitle = "Enter your company website, select a solution type, and add details.",
   announcementText = "AI-Powered Bot Design",
   isProcessing = false,
   onSend,
-  onImport
+  onImport,
+  onCompanyUrlChange,
+  companyUrl = '',
+  brandInfo = null
 }: HeroChatProps) {
   const toggleSidebar = useStore((state) => state.toggleSidebar)
+  const [localCompanyUrl, setLocalCompanyUrl] = useState(companyUrl)
+  const [botType, setBotType] = useState('custom')
+  const [additionalInfo, setAdditionalInfo] = useState('')
+  
+  const handleUrlChange = useCallback((url: string) => {
+    setLocalCompanyUrl(url)
+    onCompanyUrlChange?.(url)
+  }, [onCompanyUrlChange])
+  
+  const handleSubmit = useCallback(() => {
+    // Build a description from the bot type and additional info
+    const selectedType = BOT_TYPES.find(t => t.id === botType)
+    const description = additionalInfo.trim() 
+      ? `${selectedType?.label} bot: ${additionalInfo.trim()}`
+      : `${selectedType?.label} bot for customer service`
+    onSend?.(description, localCompanyUrl, botType)
+  }, [onSend, localCompanyUrl, botType, additionalInfo])
   
   return (
     <div className="relative flex flex-col items-center justify-center min-h-screen w-full overflow-hidden">
@@ -701,7 +940,7 @@ export function HeroChat({
               className="w-12 h-12 rounded-xl shadow-lg"
             />
             <div className="flex flex-col">
-              <span className="text-white font-bold text-xl tracking-[-0.02em]">Solution Builder</span>
+              <span className="text-white font-bold text-xl tracking-[-0.02em]">Ben's Solution Builder</span>
               <span className="text-[#6a6a75] text-sm font-medium">DEMO for Pypestream</span>
             </div>
           </div>
@@ -725,11 +964,18 @@ export function HeroChat({
           <p className="text-sm sm:text-base font-medium text-[#7a7a85] whitespace-nowrap">{subtitle}</p>
         </div>
 
-        {/* Chat input */}
+        {/* Solution Builder Form */}
         <div className="w-full max-w-[700px] mb-8 animate-hero animate-hero-delay-2">
-          <ChatInput 
-            onSend={onSend} 
+          <SolutionBuilderForm
+            companyUrl={localCompanyUrl}
+            onCompanyUrlChange={handleUrlChange}
+            botType={botType}
+            onBotTypeChange={setBotType}
+            additionalInfo={additionalInfo}
+            onAdditionalInfoChange={setAdditionalInfo}
+            brandInfo={brandInfo}
             isProcessing={isProcessing}
+            onSubmit={handleSubmit}
           />
         </div>
 

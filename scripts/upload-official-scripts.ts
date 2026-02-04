@@ -9,33 +9,45 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+import { config } from 'dotenv';
 
-const SUPABASE_URL = 'https://lkjxlgvqlcvlupyqjvpv.supabase.co';
-const SCRIPTS_ENDPOINT = `${SUPABASE_URL}/functions/v1/sd-action-scripts`;
+// ESM compatibility for __dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Get admin key from environment
+// Load .env file
+config();
+
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://jcsfggahtaewgqytvgau.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 if (!SUPABASE_SERVICE_KEY) {
-  console.error('Error: SUPABASE_SERVICE_KEY environment variable is required');
-  console.error('Usage: SUPABASE_SERVICE_KEY=your-key npx tsx scripts/upload-official-scripts.ts');
+  console.error('Error: SUPABASE_SERVICE_KEY not found in .env file');
+  console.error('Add SUPABASE_SERVICE_KEY=your-service-role-key to your .env file');
   process.exit(1);
 }
 
+console.log(`Using Supabase URL: ${SUPABASE_URL}`);
+
+// Create Supabase client with service role key for admin access
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
 async function uploadScript(name: string, content: string): Promise<boolean> {
   try {
-    const response = await fetch(SCRIPTS_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-      },
-      body: JSON.stringify({ name, content }),
-    });
+    const { error } = await supabase
+      .from('action_scripts')
+      .upsert({
+        name,
+        content,
+        category: 'official',
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'name' });
 
-    if (!response.ok) {
-      const error = await response.json();
-      console.error(`Failed to upload ${name}:`, error);
+    if (error) {
+      console.error(`Failed to upload ${name}:`, error.message);
       return false;
     }
 

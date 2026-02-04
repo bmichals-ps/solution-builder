@@ -10,6 +10,8 @@ export { DeployPage } from './DeployPage';
 export { LoginPage } from './LoginPage';
 // Instant flow pages
 export { ConfirmDetailsPage } from './ConfirmDetailsPage';
+export { SolutionArchitecturePage } from './SolutionArchitecturePage';
 export { ProcessingPage } from './ProcessingPage';
 export { ResultsPage } from './ResultsPage';
 export { EditorPage } from './EditorPage';
+export { LiveEditPage } from './LiveEditPage';

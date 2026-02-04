@@ -1,13 +1,11 @@
 /**
  * Solutions API Service
  * 
- * Handles CRUD operations for solutions via Supabase Edge Function
+ * Handles CRUD operations for solutions via direct Supabase client
  */
 
+import { supabase } from '../lib/supabase';
 import type { SavedSolution } from '../types';
-
-const SUPABASE_URL = 'https://lkjxlgvqlcvlupyqjvpv.supabase.co';
-const SOLUTIONS_ENDPOINT = `${SUPABASE_URL}/functions/v1/sd-solutions`;
 
 // Convert database row to SavedSolution format
 function dbToSolution(row: any): SavedSolution {
@@ -33,52 +31,79 @@ function dbToSolution(row: any): SavedSolution {
     spreadsheetUrl: row.spreadsheet_url || undefined,
     botUrl: row.bot_url || undefined,
     widgetUrl: row.widget_url || undefined,
+    // Deployment details
+    widgetId: row.widget_id || undefined,
+    botId: row.bot_id || undefined,
+    versionId: row.version_id || undefined,
+    // Architecture editor state
+    architectureState: row.architecture_state || undefined,
   };
 }
 
-// Convert SavedSolution to database format
+// Convert SavedSolution to database format (snake_case)
 function solutionToDb(solution: Partial<SavedSolution>) {
   const db: any = {};
   if (solution.name !== undefined) db.name = solution.name;
-  if (solution.clientName !== undefined) db.clientName = solution.clientName;
-  if (solution.projectType !== undefined) db.projectType = solution.projectType;
+  if (solution.clientName !== undefined) db.client_name = solution.clientName;
+  if (solution.projectType !== undefined) db.project_type = solution.projectType;
   if (solution.description !== undefined) db.description = solution.description;
   if (solution.status !== undefined) db.status = solution.status;
-  if (solution.nodeCount !== undefined) db.nodeCount = solution.nodeCount;
-  if (solution.deployedEnvironment !== undefined) db.deployedEnvironment = solution.deployedEnvironment;
+  if (solution.nodeCount !== undefined) db.node_count = solution.nodeCount;
+  if (solution.deployedEnvironment !== undefined) db.deployed_environment = solution.deployedEnvironment;
   // Creation progress
-  if (solution.currentStep !== undefined) db.currentStep = solution.currentStep;
-  // Requirements step data (stored as JSON)
-  if (solution.requirementsQuestions !== undefined) db.requirementsQuestions = solution.requirementsQuestions;
-  if (solution.requirementsAnswers !== undefined) db.requirementsAnswers = solution.requirementsAnswers;
+  if (solution.currentStep !== undefined) db.current_step = solution.currentStep;
+  // Requirements step data (stored as JSONB)
+  if (solution.requirementsQuestions !== undefined) db.requirements_questions = solution.requirementsQuestions;
+  if (solution.requirementsAnswers !== undefined) db.requirements_answers = solution.requirementsAnswers;
   // Generated content
-  if (solution.csvContent !== undefined) db.csvContent = solution.csvContent;
+  if (solution.csvContent !== undefined) db.csv_content = solution.csvContent;
   // External links
-  if (solution.spreadsheetUrl !== undefined) db.spreadsheetUrl = solution.spreadsheetUrl;
-  if (solution.botUrl !== undefined) db.botUrl = solution.botUrl;
-  if (solution.widgetUrl !== undefined) db.widgetUrl = solution.widgetUrl;
+  if (solution.spreadsheetUrl !== undefined) db.spreadsheet_url = solution.spreadsheetUrl;
+  if (solution.botUrl !== undefined) db.bot_url = solution.botUrl;
+  if (solution.widgetUrl !== undefined) db.widget_url = solution.widgetUrl;
+  // Deployment details
+  if (solution.widgetId !== undefined) db.widget_id = solution.widgetId;
+  if (solution.botId !== undefined) db.bot_id = solution.botId;
+  if (solution.versionId !== undefined) db.version_id = solution.versionId;
+  // Architecture editor state (stored as JSONB)
+  if (solution.architectureState !== undefined) db.architecture_state = solution.architectureState;
   return db;
 }
 
 /**
- * Fetch all solutions for a user
+ * Get the current user's profile ID from Supabase auth
  */
-export async function fetchSolutions(userEmail: string): Promise<SavedSolution[]> {
-  try {
-    const response = await fetch(`${SOLUTIONS_ENDPOINT}?userEmail=${encodeURIComponent(userEmail)}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
+async function getCurrentUserId(): Promise<string | null> {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id || null;
+}
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to fetch solutions');
+/**
+ * Fetch all solutions for the current user
+ */
+export async function fetchSolutions(userEmail?: string): Promise<SavedSolution[]> {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.log('[Solutions API] No authenticated user');
+      return [];
     }
 
-    const data = await response.json();
-    return (data.solutions || []).map(dbToSolution);
+    const { data, error } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error('[Solutions API] Error fetching solutions:', error);
+      return [];
+    }
+
+    console.log(`[Solutions API] Fetched ${data?.length || 0} solutions for user`);
+    return (data || []).map(dbToSolution);
   } catch (error) {
-    console.error('Error fetching solutions:', error);
+    console.error('[Solutions API] Error fetching solutions:', error);
     return [];
   }
 }
@@ -91,24 +116,34 @@ export async function createSolution(
   solution: Omit<SavedSolution, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<SavedSolution | null> {
   try {
-    const response = await fetch(SOLUTIONS_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userEmail,
-        ...solutionToDb(solution),
-      }),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to create solution');
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.error('[Solutions API] No authenticated user for create');
+      return null;
     }
 
-    const data = await response.json();
-    return dbToSolution(data.solution);
+    const dbData = {
+      ...solutionToDb(solution),
+      user_id: userId,
+    };
+
+    console.log('[Solutions API] Creating solution:', solution.name);
+
+    const { data, error } = await supabase
+      .from('projects')
+      .insert(dbData)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[Solutions API] Error creating solution:', error);
+      return null;
+    }
+
+    console.log('[Solutions API] Solution created:', data.id);
+    return dbToSolution(data);
   } catch (error) {
-    console.error('Error creating solution:', error);
+    console.error('[Solutions API] Error creating solution:', error);
     return null;
   }
 }
@@ -121,21 +156,36 @@ export async function updateSolution(
   updates: Partial<SavedSolution>
 ): Promise<SavedSolution | null> {
   try {
-    const response = await fetch(`${SOLUTIONS_ENDPOINT}/${solutionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(solutionToDb(updates)),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to update solution');
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.error('[Solutions API] No authenticated user for update');
+      return null;
     }
 
-    const data = await response.json();
-    return dbToSolution(data.solution);
+    const dbData = {
+      ...solutionToDb(updates),
+      updated_at: new Date().toISOString(),
+    };
+
+    console.log('[Solutions API] Updating solution:', solutionId);
+
+    const { data, error } = await supabase
+      .from('projects')
+      .update(dbData)
+      .eq('id', solutionId)
+      .eq('user_id', userId) // RLS safety - only update own projects
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[Solutions API] Error updating solution:', error);
+      return null;
+    }
+
+    console.log('[Solutions API] Solution updated:', data.id);
+    return dbToSolution(data);
   } catch (error) {
-    console.error('Error updating solution:', error);
+    console.error('[Solutions API] Error updating solution:', error);
     return null;
   }
 }
@@ -145,19 +195,59 @@ export async function updateSolution(
  */
 export async function deleteSolution(solutionId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${SOLUTIONS_ENDPOINT}/${solutionId}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to delete solution');
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.error('[Solutions API] No authenticated user for delete');
+      return false;
     }
 
+    console.log('[Solutions API] Deleting solution:', solutionId);
+
+    const { error } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', solutionId)
+      .eq('user_id', userId); // RLS safety - only delete own projects
+
+    if (error) {
+      console.error('[Solutions API] Error deleting solution:', error);
+      return false;
+    }
+
+    console.log('[Solutions API] Solution deleted:', solutionId);
     return true;
   } catch (error) {
-    console.error('Error deleting solution:', error);
+    console.error('[Solutions API] Error deleting solution:', error);
     return false;
+  }
+}
+
+/**
+ * Get a single solution by ID
+ */
+export async function getSolution(solutionId: string): Promise<SavedSolution | null> {
+  try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      console.error('[Solutions API] No authenticated user');
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('id', solutionId)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      console.error('[Solutions API] Error fetching solution:', error);
+      return null;
+    }
+
+    return dbToSolution(data);
+  } catch (error) {
+    console.error('[Solutions API] Error fetching solution:', error);
+    return null;
   }
 }

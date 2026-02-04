@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, 
   Play, 
@@ -114,6 +115,7 @@ function ActionCard({
 }
 
 export function SolutionDetailPage() {
+  const navigate = useNavigate();
   const activeSolutionId = useStore((state) => state.activeSolutionId);
   const savedSolutions = useStore((state) => state.savedSolutions);
   const setStep = useStore((state) => state.setStep);
@@ -132,7 +134,7 @@ export function SolutionDetailPage() {
         <h2 className="text-xl font-semibold text-white mb-2">Solution not found</h2>
         <p className="text-[#8585a3] mb-6">The solution you're looking for doesn't exist.</p>
         <button
-          onClick={() => setStep('dashboard')}
+          onClick={() => navigate('/dashboard')}
           className="px-4 py-2 rounded-xl bg-[#6366f1] hover:bg-[#5558e3] text-white font-medium transition-colors"
         >
           Back to Dashboard
@@ -165,9 +167,8 @@ export function SolutionDetailPage() {
       });
     }
     
-    // Navigate to the saved step or project-setup
-    const targetStep = solution.currentStep || 'project-setup';
-    setStep(targetStep);
+    // Navigate to the solution's architecture page
+    navigate(`/solutions/${solution.id}`);
   };
   
   // Handle opening Google Sheets
@@ -194,7 +195,7 @@ export function SolutionDetailPage() {
   // Handle back to dashboard
   const handleBack = () => {
     setActiveSolution(null);
-    setStep('dashboard');
+    navigate('/dashboard');
   };
   
   // Format date

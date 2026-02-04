@@ -494,132 +494,56 @@ export const useStore = create<AppStore>()(
     }),
     {
       name: 'pypestream-solution-designer',
-      version: 8, // Bumped - now persisting instant-build results to avoid re-generation
+      version: 10, // Bumped - now persisting work-in-progress to prevent data loss on reload
+      // Persist credentials AND current work-in-progress
+      // This prevents losing work when the page is reloaded during generation/deploy
       partialize: (state) => ({
-        // Credentials & integrations
+        // API credentials (always persist)
         credentials: state.credentials,
-        integrations: state.integrations,
-        
-        // Cache solutions locally for instant load on refresh
-        savedSolutions: state.savedSolutions,
-        solutionsLoaded: state.solutionsLoaded,
-        
-        // CRITICAL: Persist working state to prevent data loss on reload
-        activeSolutionId: state.activeSolutionId,
-        currentStep: state.currentStep,
+        // Current work-in-progress (auto-save)
         projectConfig: state.projectConfig,
-        // Requirements step data (AI-generated questions and user answers)
-        requirementsQuestions: state.requirementsQuestions,
-        requirementsAnswers: state.requirementsAnswers,
-        clarifyingQuestions: state.clarifyingQuestions,
-        solution: state.solution,
-        
-        // INSTANT BUILD: Persist to avoid expensive CSV regeneration
         instantStep: state.instantStep,
         extractedDetails: state.extractedDetails,
         instantBuildResult: state.instantBuildResult,
-        
-        // User is NOT persisted - comes from Supabase auth
+        solution: state.solution,
+        activeSolutionId: state.activeSolutionId,
+        // Requirements data
+        requirementsQuestions: state.requirementsQuestions,
+        requirementsAnswers: state.requirementsAnswers,
       }),
-      // Migrate from older versions
+      // Migration from old versions
       migrate: (persistedState: any, version: number) => {
-        if (version < 8) {
-          // Preserve existing data but add new fields
-          return {
-            ...persistedState,
-            user: defaultUser,
-            // Keep savedSolutions if they exist
-            savedSolutions: persistedState.savedSolutions || [],
-            solutionsLoaded: persistedState.solutionsLoaded ?? false,
-            // Initialize new persisted fields
-            activeSolutionId: persistedState.activeSolutionId ?? null,
-            currentStep: persistedState.currentStep ?? 'welcome',
-            projectConfig: persistedState.projectConfig ?? defaultProjectConfig,
-            // Requirements step data
-            requirementsQuestions: persistedState.requirementsQuestions ?? [],
-            requirementsAnswers: persistedState.requirementsAnswers ?? {},
-            clarifyingQuestions: persistedState.clarifyingQuestions ?? [],
-            solution: persistedState.solution ?? null,
-            // Instant-build state (v8+)
-            instantStep: persistedState.instantStep ?? 'confirm',
-            extractedDetails: persistedState.extractedDetails ?? null,
-            instantBuildResult: persistedState.instantBuildResult ?? null,
-          };
-        }
+        console.log('[Store] Migrating from version', version, 'to 10');
+        // Accept data from version 9 (credentials only) - just pass through
+        // The merge function will handle setting defaults for missing fields
         return persistedState;
       },
-      // Custom merge to properly restore all state from localStorage
+      // Merge persisted state with current state
       merge: (persistedState: any, currentState) => {
-        // Start with current state
-        const merged = { ...currentState };
+        if (!persistedState) return currentState;
         
-        if (persistedState) {
-          // Merge credentials
-          if (persistedState.credentials) {
-            merged.credentials = persistedState.credentials;
-          }
-          
-          // Merge integrations - update connected status from persisted state
-          if (persistedState.integrations && Array.isArray(persistedState.integrations)) {
-            merged.integrations = currentState.integrations.map(integration => {
-              const persisted = persistedState.integrations.find((p: any) => p.id === integration.id);
-              if (persisted) {
-                return {
-                  ...integration,
-                  connected: persisted.connected ?? false,
-                  connectionId: persisted.connectionId,
-                };
-              }
-              return integration;
-            });
-          }
-          
-          // Restore cached solutions for instant load
-          if (persistedState.savedSolutions && Array.isArray(persistedState.savedSolutions)) {
-            merged.savedSolutions = persistedState.savedSolutions;
-            merged.solutionsLoaded = persistedState.solutionsLoaded ?? false;
-          }
-          
-          // CRITICAL: Restore working state to prevent data loss
-          if (persistedState.activeSolutionId !== undefined) {
-            merged.activeSolutionId = persistedState.activeSolutionId;
-          }
-          if (persistedState.currentStep) {
-            merged.currentStep = persistedState.currentStep;
-          }
-          if (persistedState.projectConfig) {
-            merged.projectConfig = { ...defaultProjectConfig, ...persistedState.projectConfig };
-          }
-          // Restore requirements step data
-          if (persistedState.requirementsQuestions && Array.isArray(persistedState.requirementsQuestions)) {
-            merged.requirementsQuestions = persistedState.requirementsQuestions;
-          }
-          if (persistedState.requirementsAnswers) {
-            merged.requirementsAnswers = persistedState.requirementsAnswers;
-          }
-          if (persistedState.clarifyingQuestions && Array.isArray(persistedState.clarifyingQuestions)) {
-            merged.clarifyingQuestions = persistedState.clarifyingQuestions;
-          }
-          if (persistedState.solution) {
-            merged.solution = persistedState.solution;
-          }
-          
-          // Restore instant-build state (prevents re-generation after reload)
-          if (persistedState.instantStep) {
-            merged.instantStep = persistedState.instantStep;
-          }
-          if (persistedState.extractedDetails) {
-            merged.extractedDetails = persistedState.extractedDetails;
-          }
-          if (persistedState.instantBuildResult) {
-            merged.instantBuildResult = persistedState.instantBuildResult;
-          }
-        }
+        console.log('[Store] Restoring persisted state:', {
+          hasCredentials: !!persistedState.credentials,
+          hasProjectConfig: !!persistedState.projectConfig,
+          hasInstantBuildResult: !!persistedState.instantBuildResult,
+          instantStep: persistedState.instantStep,
+        });
         
-        // User comes from Supabase auth, not localStorage
-        merged.user = defaultUser;
-        
-        return merged as typeof currentState;
+        return {
+          ...currentState,
+          // Restore credentials
+          credentials: persistedState.credentials || currentState.credentials,
+          // Restore work-in-progress
+          projectConfig: persistedState.projectConfig || currentState.projectConfig,
+          instantStep: persistedState.instantStep || currentState.instantStep,
+          extractedDetails: persistedState.extractedDetails || currentState.extractedDetails,
+          instantBuildResult: persistedState.instantBuildResult || currentState.instantBuildResult,
+          solution: persistedState.solution || currentState.solution,
+          activeSolutionId: persistedState.activeSolutionId || currentState.activeSolutionId,
+          // Restore requirements
+          requirementsQuestions: persistedState.requirementsQuestions || currentState.requirementsQuestions,
+          requirementsAnswers: persistedState.requirementsAnswers || currentState.requirementsAnswers,
+        };
       },
     }
   )

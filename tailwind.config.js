@@ -58,6 +58,7 @@ export default {
         'fade-up': 'fadeUp 0.5s cubic-bezier(0.19, 1, 0.22, 1) forwards',
         'fade-in': 'fadeIn 0.4s cubic-bezier(0.25, 1, 0.5, 1) forwards',
         'scale-in': 'scaleIn 0.3s cubic-bezier(0.19, 1, 0.22, 1) forwards',
+        'pulse-subtle': 'pulseSubtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       keyframes: {
         fadeUp: {
@@ -71,6 +72,10 @@ export default {
         scaleIn: {
           from: { opacity: '0', transform: 'scale(0.96)' },
           to: { opacity: '1', transform: 'scale(1)' },
+        },
+        pulseSubtle: {
+          '0%, 100%': { opacity: '1', boxShadow: '0 0 20px -8px rgba(99, 102, 241, 0.4)' },
+          '50%': { opacity: '0.85', boxShadow: '0 0 30px -5px rgba(99, 102, 241, 0.6)' },
         },
       },
     },

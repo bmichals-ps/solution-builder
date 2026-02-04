@@ -85,10 +85,18 @@ export function RequirementsPage() {
     const fetchQuestions = async () => {
       setIsLoadingQuestions(true);
       try {
+        // Only pass serializable fields - avoid passing full projectConfig which may contain DOM refs or blobs
         const response = await fetch('/api/generate-requirements', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectConfig })
+          body: JSON.stringify({ 
+            projectConfig: {
+              clientName: projectConfig.clientName,
+              projectName: projectConfig.projectName,
+              projectType: projectConfig.projectType,
+              description: projectConfig.description
+            }
+          })
         });
         
         if (response.ok) {

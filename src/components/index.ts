@@ -5,3 +5,4 @@ export { Card, CardHeader } from './Card';
 export { Input, Textarea } from './Input';
 export { ConnectService } from './ConnectService';
 export { ScriptEditorModal } from './ui/script-editor-modal';
+export { FlowchartProgress } from './FlowchartProgress';

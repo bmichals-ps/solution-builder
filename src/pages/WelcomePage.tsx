@@ -6,6 +6,8 @@ import { ImportModal } from '../components/ui/import-modal';
 import { Loader2, FileSearch, Sparkles } from 'lucide-react';
 import { analyzeFigmaFile } from '../services/figma-analyzer';
 import { extractProjectDetails, fetchBrandAssets } from '../services/instant-build';
+import { ConfirmDetailsPage } from './ConfirmDetailsPage';
+import { ProcessingPage } from './ProcessingPage';
 import type { ExtractedDetails } from '../types';
 
 // Check if debug mode is enabled
@@ -91,47 +93,156 @@ export function WelcomePage() {
     setLoading, 
     credentials,
     setExtractedDetails,
-    setInstantStep 
+    setInstantStep,
+    instantStep,
+    startNewSolution,
+    projectConfig
   } = useStore();
   const [isProcessing, setIsProcessing] = useState(false);
   const [importSource, setImportSource] = useState<'figma' | 'sheets' | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzingFile, setAnalyzingFile] = useState<{ source: string; name: string } | null>(null);
-
-  const handleSend = async (message: string) => {
-    if (!message.trim()) return;
+  
+  // Company URL state for brand fetching
+  const [companyUrl, setCompanyUrl] = useState('');
+  const [brandInfo, setBrandInfo] = useState<{ name: string; logo: string; color: string } | null>(null);
+  const [brandFetchTimeout, setBrandFetchTimeout] = useState<NodeJS.Timeout | null>(null);
+  
+  // Debounced brand fetching when URL changes
+  const handleCompanyUrlChange = async (url: string) => {
+    setCompanyUrl(url);
     
+    // Clear previous timeout
+    if (brandFetchTimeout) {
+      clearTimeout(brandFetchTimeout);
+    }
+    
+    // Reset brand info if URL is cleared
+    if (!url.trim()) {
+      setBrandInfo(null);
+      return;
+    }
+    
+    // Debounce the brand fetch
+    const timeout = setTimeout(async () => {
+      try {
+        // Extract domain from URL
+        const domain = url.replace(/^(https?:\/\/)?/, '').replace(/\/.*$/, '').trim();
+        if (!domain || !domain.includes('.')) return;
+        
+        console.log('[Welcome] Fetching brand for domain:', domain);
+        const assets = await fetchBrandAssets(domain);
+        
+        if (assets && assets.name) {
+          setBrandInfo({
+            name: assets.name,
+            logo: assets.logoUrl || '',
+            color: assets.primaryColor || '#6366f1'
+          });
+          console.log('[Welcome] Brand detected:', assets.name);
+        }
+      } catch (err) {
+        console.log('[Welcome] Brand fetch failed:', err);
+        setBrandInfo(null);
+      }
+    }, 800); // Debounce 800ms
+    
+    setBrandFetchTimeout(timeout);
+  };
+
+  const handleSend = async (message: string, providedCompanyUrl?: string, botType?: string) => {
     setIsProcessing(true);
     setLoading(true);
+    
+    // CRITICAL: Clear old project state BEFORE setting new values
+    // This prevents stale Tim Hortons/etc data from persisting
+    console.log('[Welcome] Clearing old project state. Old brandAssets:', projectConfig.brandAssets?.name);
+    
+    // Reset projectConfig to default to clear old brandAssets
+    setProjectConfig({
+      clientName: 'CX',
+      projectName: '',
+      projectType: 'support',
+      description: '',
+      referenceFiles: [],
+      targetCompany: undefined,
+      brandAssets: undefined,
+    });
+    setExtractedDetails(null);
 
     try {
-      // Extract project details using AI
-      console.log('[Welcome] Extracting project details...');
-      const extracted = await extractProjectDetails(message.trim());
+      // Use the company URL if provided
+      const urlToUse = providedCompanyUrl || companyUrl;
+      const companyDomain = urlToUse.replace(/^(https?:\/\/)?/, '').replace(/\/.*$/, '').trim();
       
-      // Fetch brand assets for the target company
+      // Fetch brand assets from URL
       let brandAssets = null;
-      if (extracted.targetCompany) {
-        console.log('[Welcome] Fetching brand assets for:', extracted.targetCompany);
-        brandAssets = await fetchBrandAssets(extracted.targetCompany);
-        if (brandAssets) {
+      let companyName = '';
+      if (companyDomain && companyDomain.includes('.')) {
+        console.log('[Welcome] Fetching brand assets from URL:', companyDomain);
+        brandAssets = await fetchBrandAssets(companyDomain);
+        if (brandAssets && brandAssets.name) {
           console.log('[Welcome] Brand detected:', brandAssets.name);
+          companyName = brandAssets.name;
+        } else {
+          // Use domain as company name if brand fetch fails
+          companyName = companyDomain.split('.')[0];
+          companyName = companyName.charAt(0).toUpperCase() + companyName.slice(1);
         }
       }
+      
+      // Map bot type to project type and labels
+      const botTypeConfig: Record<string, { projectType: ExtractedDetails['projectType']; label: string; suffix: string }> = {
+        'claims': { projectType: 'claims', label: 'Claims & FNOL', suffix: 'FNOL' },
+        'support': { projectType: 'support', label: 'Customer Support', suffix: 'Support' },
+        'sales': { projectType: 'sales', label: 'Sales & Lead Gen', suffix: 'Sales' },
+        'onboarding': { projectType: 'custom', label: 'Onboarding', suffix: 'Onboarding' },
+        'billing': { projectType: 'custom', label: 'Billing & Payments', suffix: 'Billing' },
+        'appointments': { projectType: 'custom', label: 'Scheduling', suffix: 'Scheduling' },
+        'feedback': { projectType: 'custom', label: 'Feedback & Surveys', suffix: 'Feedback' },
+        'custom': { projectType: 'custom', label: 'Custom', suffix: 'Bot' },
+      };
+      
+      const config = botTypeConfig[botType || 'custom'] || botTypeConfig['custom'];
+      
+      // Clean company name for use in project name (PascalCase, no spaces)
+      const cleanCompanyName = companyName
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .split(/\s+/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join('');
+      
+      // Build optimized description for AI generation
+      const optimizedDescription = message 
+        ? `${config.label} bot for ${companyName}: ${message}`
+        : `${config.label} bot for ${companyName} customers`;
+      
+      // Build extracted details - clientName is ALWAYS "CX", projectName includes company
+      const extracted: ExtractedDetails = {
+        clientName: 'CX',  // Always CX
+        projectName: `${cleanCompanyName}${config.suffix}MVP`,  // e.g., DisneyPlusSupportMVP
+        projectType: config.projectType,
+        botPurpose: optimizedDescription,
+        keyFeatures: [],
+        targetCompany: companyName,
+        description: optimizedDescription,
+      };
       
       // Store extracted details in state
       setExtractedDetails(extracted);
       
       // Update project config with extracted details and brand
-      setProjectConfig({
-        clientName: extracted.clientName,
+      const newConfig = {
+        clientName: 'CX',  // Always CX
         projectName: extracted.projectName,
         projectType: extracted.projectType,
         description: extracted.description,
-        targetCompany: extracted.targetCompany,
+        targetCompany: companyName,
         brandAssets: brandAssets || undefined,
         referenceFiles: [],
-      });
+      };
+      console.log('[Welcome] Setting new projectConfig with brand:', newConfig.brandAssets?.name || 'none');
+      setProjectConfig(newConfig);
       
       setIsProcessing(false);
       setLoading(false);
@@ -317,15 +428,27 @@ export function WelcomePage() {
       .join('');
   };
 
+  // Render confirm or processing page based on instant flow step
+  if (instantStep === 'confirm') {
+    return <ConfirmDetailsPage />;
+  }
+  
+  if (instantStep === 'processing') {
+    return <ProcessingPage />;
+  }
+
   return (
     <>
       <HeroChat
         title="What will you"
         highlightedWord="design"
-        subtitle="Describe your bot in plain language. AI will extract the details."
+        subtitle="Enter the company URL for accurate branding, then describe your bot."
         isProcessing={isProcessing}
         onSend={handleSend}
         onImport={handleImport}
+        onCompanyUrlChange={handleCompanyUrlChange}
+        companyUrl={companyUrl}
+        brandInfo={brandInfo}
       />
       
       <ImportModal
