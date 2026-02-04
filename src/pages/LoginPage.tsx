@@ -202,24 +202,15 @@ export function LoginPage() {
             <div className="flex-1 h-px bg-[rgba(255,255,255,0.08)]" />
           </div>
 
-          {/* Google Sign In */}
+          {/* Google Sign In - Disabled */}
           <button
             type="button"
-            onClick={handleGoogleSignIn}
-            disabled={isLoading || isGoogleLoading}
-            className="w-full py-3 px-4 bg-white hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-800 font-medium rounded-xl transition-colors flex items-center justify-center gap-3"
+            disabled={true}
+            className="w-full py-3 px-4 bg-[#2a2a3a] opacity-50 cursor-not-allowed text-[#6a6a7a] font-medium rounded-xl flex items-center justify-center gap-3"
           >
-            {isGoogleLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin text-gray-600" />
-                <span>Connecting to Google...</span>
-              </>
-            ) : (
-              <>
-                <GoogleIcon className="w-5 h-5" />
-                <span>Continue with Google</span>
-              </>
-            )}
+            <GoogleIcon className="w-5 h-5 opacity-50" />
+            <span>Continue with Google</span>
+            <span className="text-[10px] text-[#5a5a6a] ml-1">(Coming soon)</span>
           </button>
 
           {/* Toggle Mode */}
