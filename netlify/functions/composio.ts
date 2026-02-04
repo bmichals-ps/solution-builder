@@ -277,24 +277,46 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
       const createResult = await createResponse.json();
       console.log('[Composio] Create result:', JSON.stringify(createResult, null, 2));
       
-      // Extract spreadsheet ID
-      let spreadsheetId = '';
-      let spreadsheetUrl = '';
+      // Extract spreadsheet ID - try multiple response formats
+      let spreadsheetId: string | null = null;
+      let spreadsheetUrl: string | null = null;
       
-      if (createResult.data?.spreadsheetId) {
-        spreadsheetId = createResult.data.spreadsheetId;
-        spreadsheetUrl = createResult.data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
-      } else if (createResult.response_data?.spreadsheetId) {
-        spreadsheetId = createResult.response_data.spreadsheetId;
-        spreadsheetUrl = createResult.response_data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
+      const possibleData = [
+        createResult.data?.response_data,
+        createResult.response_data,
+        createResult.data,
+        createResult,
+        createResult.successfulExecutions?.[0]?.output,
+        createResult.data?.successfulExecutions?.[0]?.output,
+      ];
+      
+      for (const data of possibleData) {
+        if (data && !spreadsheetId) {
+          spreadsheetId = data.spreadsheetId || data.id || data.spreadsheet_id;
+          spreadsheetUrl = data.spreadsheetUrl || data.spreadsheet_url || data.url;
+        }
+      }
+      
+      // Try properties object
+      if (!spreadsheetId) {
+        const props = createResult.data?.response_data?.properties || 
+                     createResult.response_data?.properties ||
+                     createResult.properties;
+        if (props) {
+          spreadsheetId = props.spreadsheetId;
+        }
+      }
+      
+      if (spreadsheetId && !spreadsheetUrl) {
+        spreadsheetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}`;
       }
       
       if (!spreadsheetId) {
-        console.log('[Composio] Could not find spreadsheet ID in response');
+        console.log('[Composio] Could not find spreadsheet ID in response:', JSON.stringify(createResult, null, 2));
         return {
           statusCode: 500,
           headers,
-          body: JSON.stringify({ error: 'Failed to get spreadsheet ID' }),
+          body: JSON.stringify({ error: 'Failed to get spreadsheet ID', response: createResult }),
         };
       }
       
