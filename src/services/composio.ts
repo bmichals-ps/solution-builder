@@ -251,3 +251,49 @@ export async function exportToGoogleSheets(
     };
   }
 }
+
+interface UpdateSheetResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Update an existing Google Sheet with new CSV content
+ * Used to redeploy the latest version to an existing sheet
+ */
+export async function updateGoogleSheet(
+  spreadsheetId: string,
+  csvContent: string,
+  userId: string
+): Promise<UpdateSheetResult> {
+  try {
+    const response = await fetch(`${API_BASE}/update-sheet`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        spreadsheetId,
+        csvContent,
+        userId,
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Update failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error || 'Update failed');
+    }
+    
+    return { success: true };
+  } catch (error) {
+    console.error('Update Sheet error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Update failed',
+    };
+  }
+}

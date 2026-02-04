@@ -1187,6 +1187,7 @@ export function SolutionArchitecturePage() {
   
   // Export to sheets state
   const [isExportingToSheets, setIsExportingToSheets] = useState(false);
+  const [isRedeployingToSheets, setIsRedeployingToSheets] = useState(false);
   
   // Flow previews cache - stores the conversation structure the user has seen/approved
   // This ensures the final CSV matches what the user previewed
@@ -2782,6 +2783,56 @@ export function SolutionArchitecturePage() {
     }
   };
   
+  // Handle Redeploy to Sheets - updates existing sheet with latest CSV
+  const handleRedeployToSheets = async () => {
+    if (!instantBuildResult?.csv) {
+      setError('No CSV data to redeploy');
+      return;
+    }
+    
+    // Extract spreadsheet ID from URL
+    const sheetsUrl = instantBuildResult.sheetsUrl;
+    if (!sheetsUrl) {
+      setError('No existing sheet URL found');
+      return;
+    }
+    
+    // Extract spreadsheet ID from URL (format: https://docs.google.com/spreadsheets/d/{ID}/...)
+    const match = sheetsUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    const spreadsheetId = match?.[1] || instantBuildResult.spreadsheetId;
+    
+    if (!spreadsheetId) {
+      setError('Could not extract spreadsheet ID from URL');
+      return;
+    }
+    
+    setIsRedeployingToSheets(true);
+    setError(null);
+    
+    try {
+      const { updateGoogleSheet } = await import('../services/composio');
+      
+      const userId = user?.email || 'anonymous';
+      
+      console.log('[RedeployToSheets] Updating sheet:', spreadsheetId);
+      
+      const result = await updateGoogleSheet(spreadsheetId, instantBuildResult.csv, userId);
+      
+      if (result.success) {
+        console.log('[RedeployToSheets] Update successful');
+        // Show a brief success indicator (the button will show a checkmark)
+      } else {
+        throw new Error(result.error || 'Update failed');
+      }
+      
+    } catch (err: any) {
+      console.error('[RedeployToSheets] Error:', err);
+      setError(err.message || 'Redeploy to Sheets failed');
+    } finally {
+      setIsRedeployingToSheets(false);
+    }
+  };
+  
   // Legacy function for backward compatibility
   const handleProceed = handleGenerate;
   
@@ -3053,6 +3104,8 @@ export function SolutionArchitecturePage() {
         }}
         onExportToSheets={handleExportToSheets}
         isExporting={isExportingToSheets}
+        onRedeployToSheets={handleRedeployToSheets}
+        isRedeploying={isRedeployingToSheets}
       />
       
       {/* API Key Modal */}

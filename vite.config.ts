@@ -799,6 +799,160 @@ export default defineConfig({
               return;
             }
             
+            // POST /api/composio/update-sheet - Update existing sheet with new CSV content
+            if (req.method === 'POST' && req.url === '/update-sheet') {
+              let body = '';
+              req.on('data', chunk => { body += chunk; });
+              req.on('end', async () => {
+                try {
+                  const { spreadsheetId, csvContent, userId } = JSON.parse(body);
+                  const apiKey = process.env.VITE_COMPOSIO_API_KEY;
+                  
+                  if (!apiKey) {
+                    res.statusCode = 500;
+                    res.end(JSON.stringify({ error: 'API key not configured' }));
+                    return;
+                  }
+                  
+                  if (!spreadsheetId) {
+                    res.statusCode = 400;
+                    res.end(JSON.stringify({ error: 'spreadsheetId is required' }));
+                    return;
+                  }
+                  
+                  if (!csvContent) {
+                    res.statusCode = 400;
+                    res.end(JSON.stringify({ error: 'csvContent is required' }));
+                    return;
+                  }
+                  
+                  console.log(`[Composio] Updating sheet: ${spreadsheetId}`);
+                  
+                  // Find Google Sheets connected account
+                  const accountsRes = await fetch(
+                    `https://backend.composio.dev/api/v3/connectedAccounts?user_uuid=${userId || 'default'}&showActiveOnly=true`,
+                    {
+                      headers: { 'x-api-key': apiKey }
+                    }
+                  );
+                  
+                  if (!accountsRes.ok) {
+                    throw new Error('Failed to fetch connected accounts');
+                  }
+                  
+                  const accountsData = await accountsRes.json();
+                  const sheetsAccount = accountsData.items?.find(
+                    (acc: any) => acc.appName === 'googlesheets' && acc.status === 'ACTIVE'
+                  );
+                  
+                  if (!sheetsAccount) {
+                    res.statusCode = 400;
+                    res.end(JSON.stringify({ 
+                      error: 'No Google Sheets connection found. Please connect Google Sheets first.' 
+                    }));
+                    return;
+                  }
+                  
+                  // Parse CSV content
+                  const lines = csvContent.trim().split('\n').filter((line: string) => line.trim());
+                  console.log(`[Composio] Parsed ${lines.length} CSV rows for update`);
+                  
+                  // Parse CSV line properly (handling quoted fields)
+                  const parseCSVLine = (line: string): string[] => {
+                    const result: string[] = [];
+                    let current = '';
+                    let inQuotes = false;
+                    
+                    for (let i = 0; i < line.length; i++) {
+                      const char = line[i];
+                      if (char === '"') {
+                        if (inQuotes && line[i + 1] === '"') {
+                          current += '"';
+                          i++;
+                        } else {
+                          inQuotes = !inQuotes;
+                        }
+                      } else if (char === ',' && !inQuotes) {
+                        result.push(current);
+                        current = '';
+                      } else {
+                        current += char;
+                      }
+                    }
+                    result.push(current);
+                    return result;
+                  };
+                  
+                  // Parse all lines into a 2D array
+                  const allRows = lines.map((line: string) => {
+                    const parsed = parseCSVLine(line);
+                    while (parsed.length < 26) {
+                      parsed.push('');
+                    }
+                    if (parsed.length > 26) {
+                      return parsed.slice(0, 26);
+                    }
+                    return parsed;
+                  });
+                  
+                  console.log(`[Composio] Attempting to update ${allRows.length} rows to spreadsheet ${spreadsheetId}`);
+                  
+                  // Clear existing content first, then write new data
+                  // Use GOOGLESHEETS_BATCH_UPDATE to overwrite from A1
+                  const updateResponse = await fetch(
+                    'https://backend.composio.dev/api/v2/actions/GOOGLESHEETS_BATCH_UPDATE/execute',
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': apiKey
+                      },
+                      body: JSON.stringify({
+                        connectedAccountId: sheetsAccount.id,
+                        input: {
+                          spreadsheet_id: spreadsheetId,
+                          sheet_name: 'Sheet1',
+                          first_cell_location: 'A1',
+                          values: allRows,
+                          valueInputOption: 'RAW'
+                        }
+                      })
+                    }
+                  );
+                  
+                  if (!updateResponse.ok) {
+                    const errorText = await updateResponse.text();
+                    console.log('[Composio] Update failed:', updateResponse.status, errorText.substring(0, 500));
+                    throw new Error('Failed to update spreadsheet');
+                  }
+                  
+                  const result = await updateResponse.json();
+                  console.log('[Composio] Update response:', JSON.stringify(result).substring(0, 500));
+                  
+                  // Check for success
+                  const isSuccess = result.successful === true || 
+                    result.successfull === true || 
+                    result.data?.response_data?.updatedCells ||
+                    result.data?.response_data?.updatedRows ||
+                    !result.error;
+                  
+                  if (!isSuccess) {
+                    throw new Error(result.data?.message || result.error || 'Update failed');
+                  }
+                  
+                  console.log('[Composio] Update completed successfully');
+                  res.setHeader('Content-Type', 'application/json');
+                  res.end(JSON.stringify({ success: true }));
+                  
+                } catch (e: any) {
+                  console.error('[Composio] Update error:', e);
+                  res.statusCode = 500;
+                  res.end(JSON.stringify({ error: e.message || String(e) }));
+                }
+              });
+              return;
+            }
+            
             next();
           } catch (error: any) {
             console.error('[Composio] Middleware error:', error);

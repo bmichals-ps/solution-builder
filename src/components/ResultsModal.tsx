@@ -28,6 +28,8 @@ interface ResultsModalProps {
   isFixing?: boolean;
   onExportToSheets?: () => Promise<void>;
   isExporting?: boolean;
+  onRedeployToSheets?: () => Promise<void>;
+  isRedeploying?: boolean;
 }
 
 export function ResultsModal({ 
@@ -41,7 +43,9 @@ export function ResultsModal({
   onFixAndDeploy,
   isFixing = false,
   onExportToSheets,
-  isExporting = false
+  isExporting = false,
+  onRedeployToSheets,
+  isRedeploying = false
 }: ResultsModalProps) {
   const [copiedWidget, setCopiedWidget] = useState(false);
   const [copiedSheets, setCopiedSheets] = useState(false);
@@ -188,20 +192,41 @@ export function ResultsModal({
                 {result.sheetsUrl && (
                   <>
                     <ExternalLink className="absolute top-3 right-3 w-3.5 h-3.5 text-[#4a4a55] group-hover:text-[#6a6a75]" />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyToClipboard(result.sheetsUrl!, 'sheets');
-                      }}
-                      className="absolute bottom-3 right-3 p-1 rounded hover:bg-white/5"
-                      title="Copy link"
-                    >
-                      {copiedSheets ? (
-                        <Check className="w-3 h-3 text-[#22c55e]" />
-                      ) : (
-                        <Copy className="w-3 h-3 text-[#4a4a55]" />
+                    <div className="absolute bottom-3 right-3 flex items-center gap-1">
+                      {/* Redeploy button */}
+                      {onRedeployToSheets && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onRedeployToSheets();
+                          }}
+                          disabled={isRedeploying}
+                          className="p-1 rounded hover:bg-white/5 disabled:opacity-50"
+                          title="Redeploy latest to sheet"
+                        >
+                          {isRedeploying ? (
+                            <Loader2 className="w-3 h-3 text-[#22c55e] animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3 h-3 text-[#4a4a55] hover:text-[#22c55e]" />
+                          )}
+                        </button>
                       )}
-                    </button>
+                      {/* Copy button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyToClipboard(result.sheetsUrl!, 'sheets');
+                        }}
+                        className="p-1 rounded hover:bg-white/5"
+                        title="Copy link"
+                      >
+                        {copiedSheets ? (
+                          <Check className="w-3 h-3 text-[#22c55e]" />
+                        ) : (
+                          <Copy className="w-3 h-3 text-[#4a4a55]" />
+                        )}
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
