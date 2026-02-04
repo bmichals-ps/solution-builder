@@ -27,6 +27,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@netlify/functions": "^5.1.2",
     "@types/form-data": "^2.5.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
