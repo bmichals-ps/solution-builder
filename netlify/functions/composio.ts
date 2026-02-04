@@ -322,12 +322,16 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
       
       console.log(`[Composio] Created spreadsheet: ${spreadsheetId}`);
       
-      // Batch update with data
-      const numColumns = lines[0]?.length || 26;
-      const endColumn = String.fromCharCode(64 + Math.min(numColumns, 26));
-      const range = `Sheet1!A1:${endColumn}${lines.length}`;
+      console.log(`[Composio] Writing ${lines.length} rows to spreadsheet`);
       
-      console.log(`[Composio] Writing ${lines.length} rows to range: ${range}`);
+      // Ensure all rows have 26 columns (pad with empty strings)
+      const paddedLines = lines.map(row => {
+        const padded = [...row];
+        while (padded.length < 26) {
+          padded.push('');
+        }
+        return padded.slice(0, 26);
+      });
       
       const batchResponse = await fetch(
         'https://backend.composio.dev/api/v2/actions/GOOGLESHEETS_BATCH_UPDATE/execute',
@@ -341,16 +345,20 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
             connectedAccountId: sheetsAccount.id,
             input: {
               spreadsheet_id: spreadsheetId,
-              range: range,
-              values: lines,
-              value_input_option: 'RAW',
+              sheet_name: 'Sheet1',
+              first_cell_location: 'A1',
+              values: paddedLines,
+              valueInputOption: 'RAW',
             },
           }),
         }
       );
       
+      const batchResult = await batchResponse.json().catch(() => ({}));
+      console.log('[Composio] Batch update response:', JSON.stringify(batchResult).substring(0, 500));
+      
       if (!batchResponse.ok) {
-        console.log('[Composio] Batch update failed, but spreadsheet was created');
+        console.log('[Composio] Batch update HTTP failed:', batchResponse.status);
       }
       
       return {
@@ -362,6 +370,111 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext) =>
           spreadsheetUrl,
           rowsWritten: lines.length,
         }),
+      };
+    }
+    
+    // POST /update-sheet - Update existing Google Sheet with new CSV content
+    if (event.httpMethod === 'POST' && path === '/update-sheet') {
+      const { spreadsheetId, csvContent, userId } = JSON.parse(event.body || '{}');
+      
+      if (!spreadsheetId) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'spreadsheetId is required' }),
+        };
+      }
+      
+      if (!csvContent) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'csvContent is required' }),
+        };
+      }
+      
+      console.log(`[Composio] Updating spreadsheet: ${spreadsheetId}`);
+      
+      // Get connected accounts
+      const accountsResponse = await fetch(
+        `https://backend.composio.dev/api/v1/connectedAccounts?user_uuid=${encodeURIComponent(userId || 'default')}&showActiveOnly=true`,
+        { headers: { 'x-api-key': apiKey } }
+      );
+      
+      if (!accountsResponse.ok) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'Failed to fetch connected accounts' }),
+        };
+      }
+      
+      const accountsData = await accountsResponse.json();
+      const accounts = accountsData.items || accountsData;
+      
+      const sheetsAccount = accounts.find((acc: any) => 
+        acc.appName?.toLowerCase() === 'googlesheets' ||
+        acc.appUniqueId?.toLowerCase().includes('googlesheets')
+      );
+      
+      if (!sheetsAccount) {
+        return {
+          statusCode: 400,
+          headers,
+          body: JSON.stringify({ error: 'No Google Sheets account connected' }),
+        };
+      }
+      
+      const normalizedCSV = csvContent.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const lines = parseCSVToRows(normalizedCSV);
+      
+      // Ensure all rows have 26 columns
+      const paddedLines = lines.map(row => {
+        const padded = [...row];
+        while (padded.length < 26) {
+          padded.push('');
+        }
+        return padded.slice(0, 26);
+      });
+      
+      console.log(`[Composio] Updating with ${paddedLines.length} rows`);
+      
+      const updateResponse = await fetch(
+        'https://backend.composio.dev/api/v2/actions/GOOGLESHEETS_BATCH_UPDATE/execute',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+          },
+          body: JSON.stringify({
+            connectedAccountId: sheetsAccount.id,
+            input: {
+              spreadsheet_id: spreadsheetId,
+              sheet_name: 'Sheet1',
+              first_cell_location: 'A1',
+              values: paddedLines,
+              valueInputOption: 'RAW',
+            },
+          }),
+        }
+      );
+      
+      const updateResult = await updateResponse.json().catch(() => ({}));
+      console.log('[Composio] Update response:', JSON.stringify(updateResult).substring(0, 500));
+      
+      if (!updateResponse.ok) {
+        return {
+          statusCode: 500,
+          headers,
+          body: JSON.stringify({ error: 'Failed to update spreadsheet', details: updateResult }),
+        };
+      }
+      
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({ success: true }),
       };
     }
     
